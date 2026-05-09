@@ -1,0 +1,47 @@
+name: Publish to NPM
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Download release
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: glsorre/lares4-ts
+          preRelease: ${{ contains(github.event.release.tag_name, 'beta') }}
+          tag: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.GH_TOKEN }}
+          tarBall: true
+
+      - name: Extract release in working directory
+        run: tar zxvf lares4-ts-${{ github.event.release.tag_name }}.tar.gz --strip-components=1 
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: v24.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the project
+        run: npm run build
+
+      - name: Publish package on NPM
+        if: ${{ !contains(github.event.release.tag_name, 'beta') }}
+        run: npm publish --provenance
+
+      - name: Publish beta package on NPM
+        if: ${{ contains(github.event.release.tag_name, 'beta') }}
+        run: npm publish --tag beta --provenance
