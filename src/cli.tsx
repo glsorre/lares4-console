@@ -2,6 +2,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { App } from './app/App.js';
+import { IntroDialog, type IntroDialogSubmit } from './app/IntroDialog.js';
 import { createLaresClient } from './infra/lares-client.js';
 import { LogStore } from './core/log-store.js';
 import { executeCommand } from './core/command-router.js';
@@ -13,18 +14,48 @@ import { CommandHistory } from './core/history.js';
 import type { SocketEventEmitted } from './infra/socket-types.js';
 import { getLogPaneRowCount, maxTailScrollOffset, totalRenderRowCount } from './core/log-view.js';
 
-const ip = process.env.LARES4_IP;
-const pin = process.env.LARES4_PIN;
 const sender = process.env.LARES4_SENDER ?? 'lares4 console';
 const wss = process.env.LARES4_WSS !== 'false';
-if (!ip || !pin) {
-  console.error('Missing required env vars: LARES4_IP and LARES4_PIN');
-  process.exit(1);
+const envIp = process.env.LARES4_IP;
+const envPin = process.env.LARES4_PIN;
+
+async function promptConnectionConfig(initialWss: boolean): Promise<IntroDialogSubmit> {
+  return await new Promise<IntroDialogSubmit>((resolve, reject) => {
+    const introInstance = render(
+      <IntroDialog
+        initialIp={envIp ?? ''}
+        initialPin={envPin ?? ''}
+        initialWss={initialWss}
+        onSubmit={(values) => {
+          introInstance.unmount();
+          resolve(values);
+        }}
+        onCancel={() => {
+          introInstance.unmount();
+          reject(new Error('Setup cancelled by user'));
+        }}
+      />,
+      { exitOnCtrlC: false, alternateScreen: true },
+    );
+  });
+}
+
+async function resolveConnectionConfig(): Promise<IntroDialogSubmit> {
+  if (envIp && envPin) {
+    return { ip: envIp, pin: envPin, wss };
+  }
+  return await promptConnectionConfig(wss);
 }
 
 let laresClient: Awaited<ReturnType<typeof createLaresClient>>;
 try {
-  laresClient = await createLaresClient({ ip, pin, sender, wss });
+  const connectionConfig = await resolveConnectionConfig();
+  laresClient = await createLaresClient({
+    ip: connectionConfig.ip,
+    pin: connectionConfig.pin,
+    sender,
+    wss: connectionConfig.wss,
+  });
 } catch (err) {
   console.error('Failed to connect to Lares 4:', err instanceof Error ? err.message : String(err));
   process.exit(1);

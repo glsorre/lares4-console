@@ -1,5 +1,6 @@
 node_modules
 dist
 .sessions
-coverage
+coverage/
+/lcov.info
 *.log

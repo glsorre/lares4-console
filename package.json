@@ -20,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "tsx --test tests/*.test.ts",
+    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts",
     "test:ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
