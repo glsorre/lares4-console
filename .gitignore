@@ -6,3 +6,4 @@ coverage/
 /lcov.info
 *.log
 src-tauri/target
+.cursor
