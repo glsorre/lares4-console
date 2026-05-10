@@ -11,6 +11,10 @@ export interface LogEntry {
   /** Shared id for lines that belong to the same rendered message block. */
   groupId?: string;
   payload?: unknown;
+  folded?: {
+    preview: string;
+    full: string;
+  };
 }
 
 export interface UiState {

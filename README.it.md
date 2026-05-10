@@ -1,41 +1,46 @@
 # lares4 console
 
-Console di debug standalone per centrali Lares4, sviluppata con Ink e basata su `lares4-ts`.
+Console di debug desktop per centrali Lares4, basata su **Tauri** e su `lares4-ts`.
 
-## Utilizzo
+## Prerequisiti
 
-### Opzione 1: Avvio con variabili d’ambiente (non interattivo)
+- **Node.js** 22+
+- Toolchain **Rust** (per `npm run tauri:build`; vedi [rustup](https://rustup.rs/))
 
-Imposta le variabili d’ambiente obbligatorie:
+## Installazione
 
-- `LARES4_IP`
-- `LARES4_PIN`
+```bash
+npm ci
+```
 
-Opzionali:
+## Avvio in sviluppo
 
-- `LARES4_SENDER` (predefinito: `lares4 console`)
-- `LARES4_WSS` (`false` per usare ws, predefinito wss)
-
-Poi esegui:
+Avvia il dev server Vite e la shell Tauri:
 
 ```bash
 npm run dev
 ```
 
-### Opzione 2: Avvio senza variabili obbligatorie (finestra introduttiva interattiva)
+IP, PIN, mittente e WSS si impostano dalla finestra dell'app.
 
-Se all’avvio manca `LARES4_IP` o `LARES4_PIN`, l’app apre una finestra introduttiva e richiede:
-
-- `ip`
-- `pin`
-- `wss` (attivo/disattivo)
-
-I valori inseriti nella finestra introduttiva valgono solo per l’esecuzione corrente e non vengono salvati.
-
-Puoi navigare con `Tab` / `Shift+Tab` oppure le frecce e premere `Invio` per proseguire.
-
-## Esempio rapido
+## Solo build degli asset web
 
 ```bash
-LARES4_IP=192.168.1.40 LARES4_PIN=123456 npm run dev
+npm run build
+```
+
+Output in `dist-desktop/`.
+
+## Build installer desktop
+
+Richiede Rust/Cargo:
+
+```bash
+npm run tauri:build
+```
+
+## Test e lint
+
+```bash
+npm run test:ci
 ```

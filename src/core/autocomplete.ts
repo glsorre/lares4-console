@@ -44,12 +44,11 @@ export function suggestCompletions(input: string): string[] {
     const current = trailingSpace ? '' : (parts[2] ?? '');
     return ['on', 'off'].filter((opt) => opt.startsWith(current));
   }
-  if (trailingSpace && parts.length > 1) {
-    return [];
-  }
 
   const options = SECONDARY_COMMANDS[root] ?? [];
-  const current = trailingSpace ? '' : (parts[1] ?? '');
+  const targetIndex = trailingSpace ? parts.length : Math.max(0, parts.length - 1);
+  if (targetIndex > 1) return [];
+  const current = targetIndex === 1 ? (parts[1] ?? '') : '';
   const exact = options.filter((opt) => opt === current);
   const prefix = options.filter((opt) => opt !== current && opt.startsWith(current));
   return [...exact, ...prefix];

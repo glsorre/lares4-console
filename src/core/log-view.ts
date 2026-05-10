@@ -1,27 +1,5 @@
 import type { LogEntry, LogTag } from './types.js';
 
-const LOG_PANE_MIN_ROWS = 8;
-/** Reserve rows for status line, command box, footer strip, and bordered log layout in `App.tsx`. */
-const LOG_PANE_CHROME_RESERVE = 8;
-
-export interface LogPaneRowCountOptions {
-  /** Extra rows used below the log (completion strip, expanded help, etc.). Keeps total layout within the terminal. */
-  readonly extraChromeRows?: number;
-}
-
-/** Height of the log viewport in terminal rows (uses live `stdout.rows` when available). */
-export function getLogPaneRowCount(options?: LogPaneRowCountOptions): number {
-  const extra = Math.max(0, options?.extraChromeRows ?? 0);
-  const r = process.stdout.rows;
-  const full = typeof r === 'number' && r > 0 ? r : 30;
-  return Math.max(LOG_PANE_MIN_ROWS, full - LOG_PANE_CHROME_RESERVE - extra);
-}
-
-/** Largest tail-based scroll offset (`scrollOffset`) for pane height; aligns with cli `clampScrollOffset`. */
-export function maxTailScrollOffset(totalRows: number, paneRows: number): number {
-  return Math.max(0, totalRows - paneRows);
-}
-
 export interface LogViewport {
   start: number;
   end: number;
@@ -34,6 +12,19 @@ export interface RenderRow {
   id?: string;
   text: string;
   strong?: boolean;
+  foldGroupId?: string;
+  foldedCollapsed?: boolean;
+  selectable?: boolean;
+  sourceEntryId?: string;
+}
+
+export interface MessageListItem {
+  id: string;
+  tag: LogTag;
+  ts: string;
+  preview: string;
+  collapsed: boolean;
+  content: string;
 }
 
 export function formatLogClock(ts: string): string {
@@ -66,7 +57,11 @@ export function getLogViewport(entries: LogEntry[], scrollOffset: number, pageSi
   };
 }
 
-export function buildRenderRows(entries: LogEntry[], gapMs: number = 3000): RenderRow[] {
+export function buildRenderRows(
+  entries: LogEntry[],
+  gapMs: number = 3000,
+  expandedFoldGroups?: ReadonlySet<string>,
+): RenderRow[] {
   const rows: RenderRow[] = [];
   let prevBlockKey: string | undefined;
   let prevBlockLastTs: number | undefined;
@@ -84,9 +79,45 @@ export function buildRenderRows(entries: LogEntry[], gapMs: number = 3000): Rend
         id: `sep:${blockKey}`,
         text: hrBetweenBlocks(strong, entry.tag, entry.ts),
         strong,
+        selectable: false,
       });
     }
-    rows.push({ kind: 'entry', id: `${blockKey}:${String(idx)}`, text: entry.message });
+    if (entry.folded) {
+      const expanded = expandedFoldGroups?.has(blockKey) ?? false;
+      if (!expanded) {
+        rows.push({
+          kind: 'entry',
+          id: `${blockKey}:${String(idx)}:folded`,
+          text: `${entry.folded.preview} … [collapsed]`,
+          foldGroupId: blockKey,
+          foldedCollapsed: true,
+          selectable: true,
+          sourceEntryId: blockKey,
+        });
+      } else {
+        const lines = entry.folded.full.split('\n');
+        for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+          const line = lines[lineIdx] ?? '';
+          rows.push({
+            kind: 'entry',
+            id: `${blockKey}:${String(idx)}:expanded:${String(lineIdx)}`,
+            text: line.length > 0 ? line : ' ',
+            foldGroupId: blockKey,
+            foldedCollapsed: false,
+            selectable: lineIdx === 0,
+            sourceEntryId: blockKey,
+          });
+        }
+      }
+    } else {
+      rows.push({
+        kind: 'entry',
+        id: `${blockKey}:${String(idx)}`,
+        text: entry.message,
+        selectable: true,
+        sourceEntryId: blockKey,
+      });
+    }
 
     if (prevBlockKey !== blockKey) {
       prevBlockKey = blockKey;
@@ -96,8 +127,40 @@ export function buildRenderRows(entries: LogEntry[], gapMs: number = 3000): Rend
   return rows;
 }
 
-export function totalRenderRowCount(entries: LogEntry[], gapMs: number = 3000): number {
-  return buildRenderRows(entries, gapMs).length;
+export function buildMessageListItems(
+  entries: LogEntry[],
+  expandedMessageIds?: ReadonlySet<string>,
+): MessageListItem[] {
+  const items: MessageListItem[] = [];
+  const grouped = new Map<string, LogEntry[]>();
+  for (let idx = 0; idx < entries.length; idx += 1) {
+    const entry = entries[idx];
+    if (!entry) continue;
+    const key = entry.groupId ?? `entry-${String(idx)}`;
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(entry);
+    else grouped.set(key, [entry]);
+  }
+  for (const [id, groupEntries] of grouped.entries()) {
+    const first = groupEntries[0];
+    if (!first) continue;
+    const folded = first.folded;
+    const expanded = expandedMessageIds?.has(id) ?? false;
+    const content = folded
+      ? (expanded ? folded.full : folded.preview)
+      : groupEntries.map((e) => (e.message.length > 0 ? e.message : ' ')).join('\n');
+    const firstLine = content.split('\n')[0] ?? '';
+    const previewBase = firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine;
+    items.push({
+      id,
+      tag: first.tag,
+      ts: first.ts,
+      preview: folded && !expanded ? `${previewBase} [collapsed]` : previewBase,
+      collapsed: Boolean(folded && !expanded),
+      content,
+    });
+  }
+  return items;
 }
 
 export function getVisibleRenderRowsFromFlat(

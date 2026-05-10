@@ -1,5 +1,4 @@
-// Not currently used: App.tsx delegates wrapping to Ink's <Text wrap> and horizontal pan to
-// state.horizontalOffset handled in cli.tsx. Kept here for a potential non-Ink rendering path.
+// Text wrapping and horizontal slice helpers for log-like rendering (tests + future UI use).
 export function wrapRenderedLine(line: string, width: number): string[] {
   if (width <= 0) {
     return [''];

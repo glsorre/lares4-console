@@ -1,6 +1,8 @@
 node_modules
 dist
+dist-desktop
 .sessions
 coverage/
 /lcov.info
 *.log
+src-tauri/target

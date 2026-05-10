@@ -1,6 +1,6 @@
 import type { EventFilter, OutputFormat } from './types.js';
 import { parseCommandTokens, parseNumber } from './parsers.js';
-import { safeJson } from './utils.js';
+import { formatOutput, safeJson } from './utils.js';
 import { canonicalStateScope } from './state-scope.js';
 import { COMMAND_HELP_LINES, EVENT_FILTERS, ROOT_COMMANDS, STATE_SCOPES } from './command-spec.js';
 
@@ -47,6 +47,30 @@ export interface CommandContext {
     rollStop: (id: number) => void;
     rollTo: (id: number, pos: number) => void;
     triggerScenario: (id: number) => void;
+    armZone?: BivariantHandler<[id: number]>;
+    zoneArm?: BivariantHandler<[id: number]>;
+    disarmZone?: BivariantHandler<[id: number]>;
+    zoneDisarm?: BivariantHandler<[id: number]>;
+    bypassZone?: BivariantHandler<[id: number]>;
+    zoneBypass?: BivariantHandler<[id: number]>;
+    outputOn?: BivariantHandler<[id: number]>;
+    setOutputOn?: BivariantHandler<[id: number]>;
+    outputOff?: BivariantHandler<[id: number]>;
+    setOutputOff?: BivariantHandler<[id: number]>;
+    outputToggle?: BivariantHandler<[id: number]>;
+    toggleOutput?: BivariantHandler<[id: number]>;
+    openGate?: BivariantHandler<[id: number]>;
+    gateOpen?: BivariantHandler<[id: number]>;
+    closeGate?: BivariantHandler<[id: number]>;
+    gateClose?: BivariantHandler<[id: number]>;
+    stopGate?: BivariantHandler<[id: number]>;
+    gateStop?: BivariantHandler<[id: number]>;
+    setThermostatMode?: BivariantHandler<[id: number, mode: string]>;
+    thermostatMode?: BivariantHandler<[id: number, mode: string]>;
+    setThermostatSetpoint?: BivariantHandler<[id: number, value: number]>;
+    thermostatSetpoint?: BivariantHandler<[id: number, value: number]>;
+    setThermostatFan?: BivariantHandler<[id: number, mode: string]>;
+    thermostatFan?: BivariantHandler<[id: number, mode: string]>;
   };
   socketSend: (cmd: string, payloadType: string, payload: Record<string, unknown>) => void;
   outputFormat: OutputFormat;
@@ -57,6 +81,28 @@ export interface CommandContext {
   onRawFullChanged: (enabled: boolean) => void;
   onExport: (path?: string) => Promise<string>;
   getStateSnapshot: (scope: string) => unknown;
+  onRecordCommand?: (args: string[]) => Promise<string[]>;
+  onReplayCommand?: (args: string[]) => Promise<string[]>;
+}
+
+type BivariantHandler<T extends unknown[]> = {
+  bivarianceHack(...args: T): void;
+}['bivarianceHack'];
+
+function callLaresMethod(
+  lares: object,
+  methods: readonly string[],
+  args: unknown[],
+  usage: string,
+): void {
+  for (const method of methods) {
+    const fn = Reflect.get(lares, method);
+    if (typeof fn === 'function') {
+      (fn as (...callArgs: unknown[]) => unknown)(...args);
+      return;
+    }
+  }
+  throw new Error(`Action not supported by lares4-ts bridge. Usage: ${usage}`);
 }
 
 export async function executeCommand(line: string, ctx: CommandContext): Promise<string[]> {
@@ -70,6 +116,9 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     return [...COMMAND_HELP_LINES];
   }
   if (head === 'format') {
+    if (!sub) {
+      return [`Output format: ${ctx.outputFormat}`];
+    }
     if (sub !== 'pretty' && sub !== 'json') {
       unsupported('format', 'format pretty|json');
     }
@@ -162,7 +211,7 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     if (snapshot === undefined) {
       return [`No data available for state scope: ${scope}`];
     }
-    return [safeJson(snapshot)];
+    return [formatOutput(snapshot, ctx.outputFormat)];
   }
   if (head === 'lights') {
     if (sub !== 'on' && sub !== 'off' && sub !== 'dim') {
@@ -185,6 +234,88 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     else ctx.lares.rollTo(id, parseNumber(args[3], 'position', { min: 0, max: 100, integer: true }));
     return [`ok covers ${sub} id=${id}`];
   }
+  if (head === 'zones') {
+    if (sub !== 'arm' && sub !== 'disarm' && sub !== 'bypass' && sub !== 'status') {
+      unsupported('zones', 'zones arm|disarm|bypass|status <id>');
+    }
+    const id = parseNumber(third, 'id', { min: 0, integer: true });
+    if (sub === 'status') {
+      const snapshot = ctx.getStateSnapshot('zones');
+      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
+      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+    }
+    if (sub === 'arm') callLaresMethod(ctx.lares, ['armZone', 'zoneArm'], [id], 'zones arm|disarm|bypass|status <id>');
+    if (sub === 'disarm') callLaresMethod(ctx.lares, ['disarmZone', 'zoneDisarm'], [id], 'zones arm|disarm|bypass|status <id>');
+    if (sub === 'bypass') callLaresMethod(ctx.lares, ['bypassZone', 'zoneBypass'], [id], 'zones arm|disarm|bypass|status <id>');
+    return [`ok zones ${sub} id=${id}`];
+  }
+  if (head === 'outputs') {
+    if (sub !== 'on' && sub !== 'off' && sub !== 'toggle' && sub !== 'status') {
+      unsupported('outputs', 'outputs on|off|toggle|status <id>');
+    }
+    const id = parseNumber(third, 'id', { min: 0, integer: true });
+    if (sub === 'status') {
+      const snapshot = ctx.getStateSnapshot('outputs');
+      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
+      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+    }
+    if (sub === 'on') callLaresMethod(ctx.lares, ['outputOn', 'setOutputOn'], [id], 'outputs on|off|toggle|status <id>');
+    if (sub === 'off') callLaresMethod(ctx.lares, ['outputOff', 'setOutputOff'], [id], 'outputs on|off|toggle|status <id>');
+    if (sub === 'toggle') callLaresMethod(ctx.lares, ['outputToggle', 'toggleOutput'], [id], 'outputs on|off|toggle|status <id>');
+    return [`ok outputs ${sub} id=${id}`];
+  }
+  if (head === 'switches') {
+    if (sub !== 'on' && sub !== 'off' && sub !== 'status') {
+      unsupported('switches', 'switches on|off|status <id>');
+    }
+    const id = parseNumber(third, 'id', { min: 0, integer: true });
+    if (sub === 'status') {
+      const snapshot = ctx.getStateSnapshot('switches');
+      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
+      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+    }
+    if (sub === 'on') callLaresMethod(ctx.lares, ['switchOn', 'setSwitchOn'], [id], 'switches on|off|status <id>');
+    if (sub === 'off') callLaresMethod(ctx.lares, ['switchOff', 'setSwitchOff'], [id], 'switches on|off|status <id>');
+    return [`ok switches ${sub} id=${id}`];
+  }
+  if (head === 'gates') {
+    if (sub !== 'open' && sub !== 'close' && sub !== 'stop' && sub !== 'status') {
+      unsupported('gates', 'gates open|close|stop|status <id>');
+    }
+    const id = parseNumber(third, 'id', { min: 0, integer: true });
+    if (sub === 'status') {
+      const snapshot = ctx.getStateSnapshot('gates');
+      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
+      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+    }
+    if (sub === 'open') callLaresMethod(ctx.lares, ['openGate', 'gateOpen'], [id], 'gates open|close|stop|status <id>');
+    if (sub === 'close') callLaresMethod(ctx.lares, ['closeGate', 'gateClose'], [id], 'gates open|close|stop|status <id>');
+    if (sub === 'stop') callLaresMethod(ctx.lares, ['stopGate', 'gateStop'], [id], 'gates open|close|stop|status <id>');
+    return [`ok gates ${sub} id=${id}`];
+  }
+  if (head === 'thermostats') {
+    if (sub !== 'mode' && sub !== 'setpoint' && sub !== 'fan' && sub !== 'status') {
+      unsupported('thermostats', 'thermostats mode|setpoint|fan|status <id> [value]');
+    }
+    const id = parseNumber(third, 'id', { min: 0, integer: true });
+    if (sub === 'status') {
+      const snapshot = ctx.getStateSnapshot('thermostats');
+      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
+      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+    }
+    const value = args[3];
+    if (!value) {
+      unsupported('thermostats', 'thermostats mode|setpoint|fan|status <id> [value]');
+    }
+    if (sub === 'mode') callLaresMethod(ctx.lares, ['setThermostatMode', 'thermostatMode'], [id, value], 'thermostats mode|setpoint|fan|status <id> [value]');
+    if (sub === 'fan') callLaresMethod(ctx.lares, ['setThermostatFan', 'thermostatFan'], [id, value], 'thermostats mode|setpoint|fan|status <id> [value]');
+    if (sub === 'setpoint') {
+      const setpoint = parseNumber(value, 'setpoint');
+      callLaresMethod(ctx.lares, ['setThermostatSetpoint', 'thermostatSetpoint'], [id, setpoint], 'thermostats mode|setpoint|fan|status <id> [value]');
+      return [`ok thermostats ${sub} id=${id} value=${String(setpoint)}`];
+    }
+    return [`ok thermostats ${sub} id=${id} value=${value}`];
+  }
   if (head === 'scenario') {
     if (sub !== 'trigger') {
       unsupported('scenario', 'scenario trigger <id>');
@@ -200,6 +331,14 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const path = args[1];
     const output = await ctx.onExport(path);
     return [`Session exported to: ${output}`];
+  }
+  if (head === 'record') {
+    if (!ctx.onRecordCommand) throw new Error('Record commands are unavailable in this runtime.');
+    return await ctx.onRecordCommand(args.slice(1));
+  }
+  if (head === 'replay') {
+    if (!ctx.onReplayCommand) throw new Error('Replay commands are unavailable in this runtime.');
+    return await ctx.onReplayCommand(args.slice(1));
   }
   if (head === 'exit' || head === 'quit') {
     return ['__EXIT__'];

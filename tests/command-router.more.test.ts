@@ -90,5 +90,38 @@ describe('command router additional coverage', () => {
     assert.equal(lines[0], 'Commands:');
     assert.ok(lines.some((line) => line.includes('raw send')));
   });
+
+  it('routes record/replay commands to runtime handlers', async () => {
+    const record = await executeCommand('record start out.ndjson', {
+      ...baseCtx,
+      onRecordCommand: async (args) => [`record:${args.join(',')}`],
+    });
+    const replay = await executeCommand('replay play', {
+      ...baseCtx,
+      onReplayCommand: async (args) => [`replay:${args.join(',')}`],
+    });
+    assert.equal(record[0], 'record:start,out.ndjson');
+    assert.equal(replay[0], 'replay:play');
+  });
+
+  it('supports new entity command families', async () => {
+    const calls: string[] = [];
+    const ctx = {
+      ...baseCtx,
+      lares: {
+        ...baseCtx.lares,
+        armZone: (id: number) => { calls.push(`armZone:${String(id)}`); },
+        outputToggle: (id: number) => { calls.push(`outputToggle:${String(id)}`); },
+        openGate: (id: number) => { calls.push(`openGate:${String(id)}`); },
+        setThermostatMode: (id: number, mode: string) => { calls.push(`setThermostatMode:${String(id)}:${mode}`); },
+      },
+    };
+    assert.match((await executeCommand('zones arm 2', ctx))[0] ?? '', /ok zones arm id=2/);
+    assert.match((await executeCommand('outputs toggle 4', ctx))[0] ?? '', /ok outputs toggle id=4/);
+    assert.match((await executeCommand('switches on 5', ctx))[0] ?? '', /ok switches on id=5/);
+    assert.match((await executeCommand('gates open 6', ctx))[0] ?? '', /ok gates open id=6/);
+    assert.match((await executeCommand('thermostats mode 1 heat', ctx))[0] ?? '', /ok thermostats mode id=1 value=heat/);
+    assert.deepEqual(calls, ['armZone:2', 'outputToggle:4', 'openGate:6', 'setThermostatMode:1:heat']);
+  });
 });
 

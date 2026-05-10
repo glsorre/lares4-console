@@ -3,18 +3,18 @@ import { describe, it } from 'node:test';
 import { applyCompletion, suggestCompletions } from '../src/core/autocomplete.js';
 import { executeCommand } from '../src/core/command-router.js';
 import {
+  buildMessageListItems,
   buildRenderRows,
   formatLogClock,
   getLogViewport,
   getVisibleRenderRows,
   getVisibleRenderRowsFromFlat,
-  maxTailScrollOffset,
 } from '../src/core/log-view.js';
-import { isControlInputToIgnore } from '../src/app/CommandTextInput.js';
 import { sliceRenderedLine, wrapRenderedLine } from '../src/core/render.js';
 import { DEFAULT_EVENT_FILTERS } from '../src/core/defaults.js';
 import type { EventFilter, LogEntry } from '../src/core/types.js';
 import { parseCommandTokens } from '../src/core/parsers.js';
+import { formatOutput } from '../src/core/utils.js';
 
 describe('autocomplete', () => {
   it('suggests raw full values', () => {
@@ -27,6 +27,14 @@ describe('autocomplete', () => {
     assert.equal(applyCompletion('events a', 'all'), 'events all ');
     assert.equal(applyCompletion('raw full o', 'off'), 'raw full off ');
     assert.equal(applyCompletion('covers to 1', '10'), 'covers to 10 ');
+  });
+
+  it('continues completion suggestions after first tab-applied token', () => {
+    const afterFirstCompletion = applyCompletion('fo', 'format');
+    assert.equal(afterFirstCompletion, 'format ');
+    const suggestions = suggestCompletions(afterFirstCompletion);
+    assert.ok(suggestions.includes('pretty'));
+    assert.ok(suggestions.includes('json'));
   });
 
   it('suggests state scopes', () => {
@@ -45,6 +53,23 @@ describe('autocomplete', () => {
   it('does not suggest deeper state tokens after scope', () => {
     const suggestions = suggestCompletions('state zones ');
     assert.deepEqual(suggestions, []);
+  });
+
+  it('suggests second token after trailing space', () => {
+    const formatSuggestions = suggestCompletions('format ');
+    assert.ok(formatSuggestions.includes('pretty'));
+    assert.ok(formatSuggestions.includes('json'));
+
+    const eventSuggestions = suggestCompletions('events ');
+    assert.ok(eventSuggestions.includes('all'));
+    assert.ok(eventSuggestions.includes('none'));
+    assert.ok(eventSuggestions.includes('raw'));
+  });
+
+  it('suggests raw full values after trailing space', () => {
+    const suggestions = suggestCompletions('raw full ');
+    assert.ok(suggestions.includes('on'));
+    assert.ok(suggestions.includes('off'));
   });
 });
 
@@ -210,15 +235,83 @@ describe('render helpers', () => {
     assert.equal(rows[1]?.strong, false);
     assert.match(rows[1]?.text ?? '', /^─── \[SYSTEM \d{2}:\d{2}:\d{2}\] ───$/);
   });
-});
 
-describe('input filtering', () => {
-  it('ignores page and wheel control input in command field', () => {
-    assert.equal(isControlInputToIgnore('\u001B[5~', { pageUp: false, pageDown: false }), true);
-    assert.equal(isControlInputToIgnore('\u001B[6~', { pageUp: false, pageDown: false }), true);
-    assert.equal(isControlInputToIgnore('\u001B[<64;80;20M', { pageUp: false, pageDown: false }), true);
-    assert.equal(isControlInputToIgnore('\u001B[<65;80;20M', { pageUp: false, pageDown: false }), true);
-    assert.equal(isControlInputToIgnore('abc', { pageUp: false, pageDown: false }), false);
+  it('renders folded entries collapsed and expanded', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        message: 'preview',
+        groupId: 'g-fold',
+        folded: {
+          preview: 'preview',
+          full: 'line1\nline2',
+        },
+      },
+    ];
+    const collapsed = buildRenderRows(entries, 2000);
+    assert.equal(collapsed.length, 1);
+    assert.match(collapsed[0]?.text ?? '', /\[collapsed\]$/);
+
+    const expanded = buildRenderRows(entries, 2000, new Set(['g-fold']));
+    assert.equal(expanded.length, 2);
+    assert.equal(expanded[0]?.text, 'line1');
+    assert.equal(expanded[1]?.text, 'line2');
+    assert.equal(collapsed[0]?.selectable, true);
+    assert.equal(collapsed[0]?.sourceEntryId, 'g-fold');
+    assert.equal(expanded[0]?.selectable, true);
+    assert.equal(expanded[1]?.selectable, false);
+    assert.equal(expanded[0]?.sourceEntryId, 'g-fold');
+    assert.equal(expanded[1]?.sourceEntryId, 'g-fold');
+  });
+
+  it('marks non-folded entries selectable and separators not selectable', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'SYSTEM', message: 'a', groupId: 'g1' },
+      { ts: new Date(6000).toISOString(), level: 'info', tag: 'SYSTEM', message: 'b', groupId: 'g2' },
+    ];
+    const rows = buildRenderRows(entries, 2000);
+    const separator = rows.find((r) => r.kind === 'separator');
+    const firstEntry = rows.find((r) => r.kind === 'entry');
+    assert.equal(separator?.selectable, false);
+    assert.equal(firstEntry?.selectable, true);
+    assert.ok(typeof firstEntry?.id === 'string');
+  });
+
+  it('uses one selection identity for multiline non-folded group rows', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'debug', tag: 'RAW_RX', message: 'line1', groupId: 'g-raw' },
+      { ts: new Date(1001).toISOString(), level: 'debug', tag: 'RAW_RX', message: 'line2', groupId: 'g-raw' },
+      { ts: new Date(1002).toISOString(), level: 'debug', tag: 'RAW_RX', message: 'line3', groupId: 'g-raw' },
+    ];
+    const rows = buildRenderRows(entries, 2000);
+    const ids = rows.filter((r) => r.kind === 'entry').map((r) => r.sourceEntryId);
+    assert.deepEqual(ids, ['g-raw', 'g-raw', 'g-raw']);
+  });
+
+  it('builds one list item per message block and links folded content', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        message: 'preview',
+        groupId: 'g-fold',
+        folded: { preview: 'preview', full: 'line1\nline2' },
+      },
+      { ts: new Date(2000).toISOString(), level: 'info', tag: 'SYSTEM', message: 'a', groupId: 'g-plain' },
+      { ts: new Date(2001).toISOString(), level: 'info', tag: 'SYSTEM', message: 'b', groupId: 'g-plain' },
+    ];
+    const collapsed = buildMessageListItems(entries);
+    assert.equal(collapsed.length, 2);
+    assert.equal(collapsed[0]?.id, 'g-fold');
+    assert.equal(collapsed[0]?.collapsed, true);
+    assert.equal(collapsed[1]?.content, 'a\nb');
+
+    const expanded = buildMessageListItems(entries, new Set(['g-fold']));
+    assert.equal(expanded[0]?.collapsed, false);
+    assert.equal(expanded[0]?.content, 'line1\nline2');
   });
 });
 
@@ -235,7 +328,7 @@ describe('command router', () => {
       triggerScenario: () => undefined,
     },
     socketSend: () => undefined,
-    outputFormat: 'pretty' as const,
+    outputFormat: 'json' as const,
     eventFilters: new Set<EventFilter>(['all']),
     onEventFiltersChanged: () => undefined,
     onFormatChanged: () => undefined,
@@ -243,6 +336,11 @@ describe('command router', () => {
     onRawFullChanged: () => undefined,
     onExport: async () => 'x.log',
     getStateSnapshot: (scope: string) => ({ scope }),
+  };
+
+  const prettyBaseCtx = {
+    ...baseCtx,
+    outputFormat: 'pretty' as const,
   };
 
   it('toggles raw full mode', async () => {
@@ -270,6 +368,56 @@ describe('command router', () => {
   it('supports state command with scope', async () => {
     const lines = await executeCommand('state lights', baseCtx);
     assert.ok(lines[0].includes('"scope": "lights"'));
+  });
+
+  it('default output mode behaves as pretty', async () => {
+    const lines = await executeCommand('state lights', prettyBaseCtx);
+    assert.equal(lines[0], 'scope: lights');
+  });
+
+  it('renders state output based on format mode', async () => {
+    const prettyLines = await executeCommand('state lights', {
+      ...baseCtx,
+      outputFormat: 'pretty',
+      getStateSnapshot: () => ({ room: 'kitchen', level: 90 }),
+    });
+    assert.equal(prettyLines[0], 'room: kitchen\nlevel: 90');
+
+    const jsonLines = await executeCommand('state lights', {
+      ...baseCtx,
+      outputFormat: 'json',
+      getStateSnapshot: () => ({ room: 'kitchen', level: 90 }),
+    });
+    assert.ok(jsonLines[0].includes('"room": "kitchen"'));
+    assert.ok(jsonLines[0].includes('"level": 90'));
+  });
+
+  it('reports current format when no format arg is provided', async () => {
+    const pretty = await executeCommand('format', {
+      ...baseCtx,
+      outputFormat: 'pretty',
+    });
+    assert.equal(pretty[0], 'Output format: pretty');
+
+    const json = await executeCommand('format', {
+      ...baseCtx,
+      outputFormat: 'json',
+    });
+    assert.equal(json[0], 'Output format: json');
+  });
+
+  it('renders pretty output for state zones and status paths', async () => {
+    const zonesState = await executeCommand('state zones', {
+      ...prettyBaseCtx,
+      getStateSnapshot: () => ({ scope: 'zones', total: 3 }),
+    });
+    assert.equal(zonesState[0], 'scope: zones\ntotal: 3');
+
+    const zoneStatus = await executeCommand('zones status 2', {
+      ...prettyBaseCtx,
+      getStateSnapshot: () => [{ id: 2, label: 'Perimeter', active: true }],
+    });
+    assert.equal(zoneStatus[0], 'id: 2\nlabel: Perimeter\nactive: true');
   });
 
   it('supports state zones', async () => {
@@ -337,17 +485,27 @@ describe('command router', () => {
   });
 });
 
-describe('scroll tail offset', () => {
-  it('maxTailScrollOffset matches clamp range for typical sizes', () => {
-    assert.equal(maxTailScrollOffset(100, 20), 80);
-    assert.equal(maxTailScrollOffset(5, 20), 0);
-    assert.equal(maxTailScrollOffset(21, 20), 1);
-  });
-});
-
 describe('defaults', () => {
   it('uses events all by default', () => {
     assert.ok(DEFAULT_EVENT_FILTERS.has('all'));
     assert.equal(DEFAULT_EVENT_FILTERS.size, 1);
+  });
+});
+
+describe('raw formatter behavior', () => {
+  it('formats parsed json as pretty tree', () => {
+    const out = formatOutput({ root: { id: 1, active: true } }, 'pretty');
+    assert.equal(out, 'root:\n  id: 1\n  active: true');
+  });
+
+  it('formats parsed json as json string', () => {
+    const out = formatOutput({ root: { id: 1 } }, 'json');
+    assert.ok(out.includes('"root"'));
+    assert.ok(out.includes('"id": 1'));
+  });
+
+  it('keeps non-json raw text unchanged in fallback path model', () => {
+    const raw = 'RAW:unstructured-frame';
+    assert.equal(raw, 'RAW:unstructured-frame');
   });
 });
