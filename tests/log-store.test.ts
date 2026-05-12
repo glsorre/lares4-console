@@ -34,7 +34,7 @@ describe('LogStore', () => {
 
   it('redacts PIN-like substrings in messages', () => {
     const store = new LogStore();
-    store.push({ level: 'info', tag: 'CMD', message: 'pin=secret123' });
+    store.push({ level: 'info', tag: 'LOG', message: 'pin=secret123' });
     assert.equal(store.all()[0]?.message, 'pin=***');
   });
 });

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { applyCompletion, suggestCompletions } from '../src/core/autocomplete.js';
-import { executeCommand } from '../src/core/command-router.js';
+import { executeCommand, type CommandOutputItem } from '../src/core/command-router.js';
+
+function textOf(item: CommandOutputItem): string {
+  return typeof item === 'string' ? item : item.text;
+}
 import {
   buildMessageListItems,
   buildRenderRows,
@@ -350,7 +354,7 @@ describe('command router', () => {
       onRawFullChanged: () => { changed = true; },
     });
     assert.ok(changed);
-    assert.ok(lines[0].includes('on'));
+    assert.ok(textOf(lines[0]).includes('on'));
   });
 
   it('supports raw sendcmd', async () => {
@@ -362,17 +366,17 @@ describe('command router', () => {
       },
     });
     assert.deepEqual(sent, ['X', 'Y', { a: 1 }]);
-    assert.ok(lines[0].includes('raw sendcmd X Y'));
+    assert.ok(textOf(lines[0]).includes('raw sendcmd X Y'));
   });
 
   it('supports state command with scope', async () => {
     const lines = await executeCommand('state lights', baseCtx);
-    assert.ok(lines[0].includes('"scope": "lights"'));
+    assert.ok(textOf(lines[0]).includes('"scope": "lights"'));
   });
 
   it('default output mode behaves as pretty', async () => {
     const lines = await executeCommand('state lights', prettyBaseCtx);
-    assert.equal(lines[0], 'scope: lights');
+    assert.equal(textOf(lines[0]), 'scope: lights');
   });
 
   it('renders state output based on format mode', async () => {
@@ -381,15 +385,15 @@ describe('command router', () => {
       outputFormat: 'pretty',
       getStateSnapshot: () => ({ room: 'kitchen', level: 90 }),
     });
-    assert.equal(prettyLines[0], 'room: kitchen\nlevel: 90');
+    assert.equal(textOf(prettyLines[0]), 'room: kitchen\nlevel: 90');
 
     const jsonLines = await executeCommand('state lights', {
       ...baseCtx,
       outputFormat: 'json',
       getStateSnapshot: () => ({ room: 'kitchen', level: 90 }),
     });
-    assert.ok(jsonLines[0].includes('"room": "kitchen"'));
-    assert.ok(jsonLines[0].includes('"level": 90'));
+    assert.ok(textOf(jsonLines[0]).includes('"room": "kitchen"'));
+    assert.ok(textOf(jsonLines[0]).includes('"level": 90'));
   });
 
   it('reports current format when no format arg is provided', async () => {
@@ -397,13 +401,13 @@ describe('command router', () => {
       ...baseCtx,
       outputFormat: 'pretty',
     });
-    assert.equal(pretty[0], 'Output format: pretty');
+    assert.equal(textOf(pretty[0]), 'Output format: pretty');
 
     const json = await executeCommand('format', {
       ...baseCtx,
       outputFormat: 'json',
     });
-    assert.equal(json[0], 'Output format: json');
+    assert.equal(textOf(json[0]), 'Output format: json');
   });
 
   it('renders pretty output for state zones and status paths', async () => {
@@ -411,18 +415,18 @@ describe('command router', () => {
       ...prettyBaseCtx,
       getStateSnapshot: () => ({ scope: 'zones', total: 3 }),
     });
-    assert.equal(zonesState[0], 'scope: zones\ntotal: 3');
+    assert.equal(textOf(zonesState[0]), 'scope: zones\ntotal: 3');
 
     const zoneStatus = await executeCommand('zones status 2', {
       ...prettyBaseCtx,
       getStateSnapshot: () => [{ id: 2, label: 'Perimeter', active: true }],
     });
-    assert.equal(zoneStatus[0], 'id: 2\nlabel: Perimeter\nactive: true');
+    assert.equal(textOf(zoneStatus[0]), 'id: 2\nlabel: Perimeter\nactive: true');
   });
 
   it('supports state zones', async () => {
     const lines = await executeCommand('state zones', baseCtx);
-    assert.ok(lines[0].includes('"scope": "zones"'));
+    assert.ok(textOf(lines[0]).includes('"scope": "zones"'));
   });
 
   it('prints explicit message when state scope has no data', async () => {
@@ -430,7 +434,7 @@ describe('command router', () => {
       ...baseCtx,
       getStateSnapshot: () => undefined,
     });
-    assert.equal(lines[0], 'No data available for state scope: zones');
+    assert.equal(textOf(lines[0]), 'No data available for state scope: zones');
   });
 
   it('reports events filter changes', async () => {
@@ -442,7 +446,7 @@ describe('command router', () => {
       },
     });
     assert.equal(next, 'acks,raw');
-    assert.ok(lines[0].includes('acks,raw'));
+    assert.ok(textOf(lines[0]).includes('acks,raw'));
   });
 
   it('throws explicit unsupported error for unknown command', async () => {
@@ -465,13 +469,13 @@ describe('command router', () => {
   it('throws explicit unsupported error for invalid events filter', async () => {
     await assert.rejects(
       () => executeCommand('events all,invalid', baseCtx),
-      /Unsupported command usage for "events"\. Usage: events none\|all\|acks,errors,multitypes,raw,changes\./,
+      /Unsupported command usage for "events"\. Usage: events none\|all\|acks,errors,multitypes,raw,changes,sent\./,
     );
   });
 
   it('returns sentinel on quit command', async () => {
     const lines = await executeCommand('quit', baseCtx);
-    assert.equal(lines[0], '__EXIT__');
+    assert.equal(textOf(lines[0]), '__EXIT__');
   });
 
   it('supports quoted tokens in command line parser', () => {

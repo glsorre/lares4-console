@@ -1,4 +1,5 @@
 import { Lares4Factory } from 'lares4-ts';
+import type { GenericLogger, Lares4WsFactory } from 'lares4-ts';
 import type { SocketEventEmitted } from './socket-types.js';
 
 export interface ClientEnv {
@@ -8,10 +9,38 @@ export interface ClientEnv {
   wss: boolean;
 }
 
-export async function createLaresClient(env: ClientEnv) {
-  const lares = await Lares4Factory.createLares4(env.sender, env.ip, env.pin, env.wss, {});
-  // Accessing internal _ws bridge that lares4-ts does not expose publicly (lares4-ts file:../).
-  // If this breaks at runtime, the library's internal naming convention has changed.
+export interface CreateLaresClientOptions {
+  onSocketSend?: (raw: string) => void;
+}
+
+const consoleLogger: GenericLogger = {
+  info: (msg) => console.info(msg),
+  error: (msg) => console.error(msg),
+  warn: (msg) => console.warn(msg),
+  debug: (msg) => console.debug(msg),
+};
+
+function buildWsFactory(onSocketSend?: (raw: string) => void): Lares4WsFactory {
+  return (url, protocols) => {
+    const ws = new WebSocket(url, protocols);
+    if (onSocketSend) {
+      const origSend = ws.send.bind(ws);
+      ws.send = ((data: Parameters<WebSocket['send']>[0]) => {
+        if (typeof data === 'string') {
+          try { onSocketSend(data); } catch { /* never break the send path */ }
+        }
+        origSend(data);
+      }) as WebSocket['send'];
+    }
+    return ws;
+  };
+}
+
+export async function createLaresClient(env: ClientEnv, options: CreateLaresClientOptions = {}) {
+  const lares = await Lares4Factory.createLares4(env.sender, env.ip, env.pin, env.wss, {
+    logger: consoleLogger,
+    wsFactory: buildWsFactory(options.onSocketSend),
+  });
   const socket = (lares as unknown as {
     _ws?: {
       send: (cmd: string, payloadType: string, payload: Record<string, unknown>) => void;

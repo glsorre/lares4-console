@@ -1,7 +1,7 @@
 export type OutputFormat = 'pretty' | 'json';
-export type EventFilter = 'all' | 'none' | 'acks' | 'errors' | 'multitypes' | 'raw' | 'changes';
+export type EventFilter = 'all' | 'none' | 'acks' | 'errors' | 'multitypes' | 'raw' | 'changes' | 'sent';
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
-export type LogTag = 'ACK' | 'RAW_RX' | 'MULTI_TYPES' | 'CHANGE' | 'ERROR' | 'CMD' | 'SYSTEM';
+export type LogTag = 'ACK' | 'RAW_RX' | 'RAW_TX' | 'BULK' | 'CHANGE' | 'ERROR' | 'LOG' | 'SYSTEM';
 
 export interface LogEntry {
   ts: string;

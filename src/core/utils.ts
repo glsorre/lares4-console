@@ -22,7 +22,7 @@ export function safeJson(value: unknown): string {
   }
 }
 
-function prettyLines(value: unknown, depth: number): string[] {
+export function prettyLines(value: unknown, depth: number): string[] {
   const pad = '  '.repeat(depth);
   const childPad = '  '.repeat(depth + 1);
   if (value === null) return [`${pad}null`];
@@ -61,8 +61,8 @@ function prettyLines(value: unknown, depth: number): string[] {
 }
 
 export function formatOutput(value: unknown, mode: OutputFormat): string {
-  if (mode === 'json') return safeJson(value);
-  return prettyLines(value, 0).join('\n');
+  if (mode === 'pretty') return prettyLines(value, 0).join('\n');
+  return safeJson(value);
 }
 
 export function shouldPrint(filters: Set<EventFilter>, type: EventFilter): boolean {

@@ -105,7 +105,9 @@ function callLaresMethod(
   throw new Error(`Action not supported by lares4-ts bridge. Usage: ${usage}`);
 }
 
-export async function executeCommand(line: string, ctx: CommandContext): Promise<string[]> {
+export type CommandOutputItem = string | { text: string; payload?: unknown };
+
+export async function executeCommand(line: string, ctx: CommandContext): Promise<CommandOutputItem[]> {
   const trimmedLine = line.trim();
   const args = parseCommandTokens(trimmedLine);
   const [head, sub, third] = args;
@@ -211,7 +213,7 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     if (snapshot === undefined) {
       return [`No data available for state scope: ${scope}`];
     }
-    return [formatOutput(snapshot, ctx.outputFormat)];
+    return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
   }
   if (head === 'lights') {
     if (sub !== 'on' && sub !== 'off' && sub !== 'dim') {
@@ -241,8 +243,11 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const id = parseNumber(third, 'id', { min: 0, integer: true });
     if (sub === 'status') {
       const snapshot = ctx.getStateSnapshot('zones');
-      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
-      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+      if (!Array.isArray(snapshot)) {
+        return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
+      }
+      const match = snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false };
+      return [{ text: formatOutput(match, ctx.outputFormat), payload: match }];
     }
     if (sub === 'arm') callLaresMethod(ctx.lares, ['armZone', 'zoneArm'], [id], 'zones arm|disarm|bypass|status <id>');
     if (sub === 'disarm') callLaresMethod(ctx.lares, ['disarmZone', 'zoneDisarm'], [id], 'zones arm|disarm|bypass|status <id>');
@@ -256,8 +261,11 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const id = parseNumber(third, 'id', { min: 0, integer: true });
     if (sub === 'status') {
       const snapshot = ctx.getStateSnapshot('outputs');
-      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
-      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+      if (!Array.isArray(snapshot)) {
+        return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
+      }
+      const match = snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false };
+      return [{ text: formatOutput(match, ctx.outputFormat), payload: match }];
     }
     if (sub === 'on') callLaresMethod(ctx.lares, ['outputOn', 'setOutputOn'], [id], 'outputs on|off|toggle|status <id>');
     if (sub === 'off') callLaresMethod(ctx.lares, ['outputOff', 'setOutputOff'], [id], 'outputs on|off|toggle|status <id>');
@@ -271,8 +279,11 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const id = parseNumber(third, 'id', { min: 0, integer: true });
     if (sub === 'status') {
       const snapshot = ctx.getStateSnapshot('switches');
-      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
-      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+      if (!Array.isArray(snapshot)) {
+        return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
+      }
+      const match = snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false };
+      return [{ text: formatOutput(match, ctx.outputFormat), payload: match }];
     }
     if (sub === 'on') callLaresMethod(ctx.lares, ['switchOn', 'setSwitchOn'], [id], 'switches on|off|status <id>');
     if (sub === 'off') callLaresMethod(ctx.lares, ['switchOff', 'setSwitchOff'], [id], 'switches on|off|status <id>');
@@ -285,8 +296,11 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const id = parseNumber(third, 'id', { min: 0, integer: true });
     if (sub === 'status') {
       const snapshot = ctx.getStateSnapshot('gates');
-      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
-      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+      if (!Array.isArray(snapshot)) {
+        return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
+      }
+      const match = snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false };
+      return [{ text: formatOutput(match, ctx.outputFormat), payload: match }];
     }
     if (sub === 'open') callLaresMethod(ctx.lares, ['openGate', 'gateOpen'], [id], 'gates open|close|stop|status <id>');
     if (sub === 'close') callLaresMethod(ctx.lares, ['closeGate', 'gateClose'], [id], 'gates open|close|stop|status <id>');
@@ -300,8 +314,11 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     const id = parseNumber(third, 'id', { min: 0, integer: true });
     if (sub === 'status') {
       const snapshot = ctx.getStateSnapshot('thermostats');
-      if (!Array.isArray(snapshot)) return [formatOutput(snapshot, ctx.outputFormat)];
-      return [formatOutput(snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false }, ctx.outputFormat)];
+      if (!Array.isArray(snapshot)) {
+        return [{ text: formatOutput(snapshot, ctx.outputFormat), payload: snapshot }];
+      }
+      const match = snapshot.find((item) => (item as { id?: unknown }).id === id) ?? { id, found: false };
+      return [{ text: formatOutput(match, ctx.outputFormat), payload: match }];
     }
     const value = args[3];
     if (!value) {

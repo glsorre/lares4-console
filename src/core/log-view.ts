@@ -25,6 +25,64 @@ export interface MessageListItem {
   preview: string;
   collapsed: boolean;
   content: string;
+  payload?: unknown;
+  repeat?: number;
+}
+
+function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: string } | undefined {
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || typeof value !== 'object') continue;
+    const arrayLike = Array.isArray(value) ? value[0] : value;
+    if (arrayLike && typeof arrayLike === 'object') {
+      const id = (arrayLike as Record<string, unknown>).ID ?? (arrayLike as Record<string, unknown>).id;
+      const sta = (arrayLike as Record<string, unknown>).STA ?? (arrayLike as Record<string, unknown>).state;
+      const idPart = id !== undefined && sta !== undefined ? `[${String(id)}] ${String(sta)}`
+        : id !== undefined ? `[${String(id)}]`
+          : sta !== undefined ? String(sta)
+            : undefined;
+      return { key, idPart };
+    }
+    return { key };
+  }
+  return undefined;
+}
+
+export function summarizeForPreview(tag: LogTag, payload: unknown, fallback: string): string {
+  if (payload === undefined || payload === null) return fallback;
+  if (typeof payload !== 'object') return fallback;
+  const obj = payload as Record<string, unknown>;
+  if (tag === 'RAW_RX' || tag === 'RAW_TX') {
+    const cmd = typeof obj.CMD === 'string' ? obj.CMD : undefined;
+    const ptype = typeof obj.PAYLOAD_TYPE === 'string' ? obj.PAYLOAD_TYPE : undefined;
+    const arrow = tag === 'RAW_TX' ? '→' : '←';
+    if (cmd && ptype) return `${arrow} ${cmd}/${ptype}`;
+    if (cmd) return `${arrow} ${cmd}`;
+    return fallback;
+  }
+  if (tag === 'ACK') {
+    const inner = obj.PAYLOAD;
+    if (inner && typeof inner === 'object') {
+      const detail = (inner as Record<string, unknown>).RESULT_DETAIL;
+      const result = (inner as Record<string, unknown>).RESULT;
+      if (typeof detail === 'string' && detail.length > 0) return `RESULT: ${detail}`;
+      if (typeof result === 'string' && result.length > 0) return `RESULT: ${result}`;
+    }
+    return fallback;
+  }
+  if (tag === 'CHANGE') {
+    const top = topKeyAndId(obj);
+    if (!top) return fallback;
+    return top.idPart ? `${top.key}${top.idPart.startsWith('[') ? '' : ' '}${top.idPart}` : top.key;
+  }
+  if (tag === 'BULK') {
+    const keys = Object.keys(obj).filter((k) => {
+      const v = obj[k];
+      return v !== null && typeof v === 'object';
+    });
+    if (keys.length === 0) return fallback;
+    return `${keys.length} types: ${keys.slice(0, 3).join(', ')}${keys.length > 3 ? '…' : ''}`;
+  }
+  return fallback;
 }
 
 export function formatLogClock(ts: string): string {
@@ -150,7 +208,9 @@ export function buildMessageListItems(
       ? (expanded ? folded.full : folded.preview)
       : groupEntries.map((e) => (e.message.length > 0 ? e.message : ' ')).join('\n');
     const firstLine = content.split('\n')[0] ?? '';
-    const previewBase = firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine;
+    const payload = groupEntries.find((e) => e.payload !== undefined)?.payload;
+    const summary = summarizeForPreview(first.tag, payload, firstLine);
+    const previewBase = summary.length > 100 ? `${summary.slice(0, 100)}…` : summary;
     items.push({
       id,
       tag: first.tag,
@@ -158,9 +218,23 @@ export function buildMessageListItems(
       preview: folded && !expanded ? `${previewBase} [collapsed]` : previewBase,
       collapsed: Boolean(folded && !expanded),
       content,
+      payload,
     });
   }
-  return items;
+  const merged: MessageListItem[] = [];
+  for (const item of items) {
+    const tail = merged[merged.length - 1];
+    if (tail && tail.tag === item.tag && tail.preview === item.preview && !tail.collapsed && !item.collapsed) {
+      tail.repeat = (tail.repeat ?? 1) + 1;
+      tail.ts = item.ts;
+      tail.id = item.id;
+      tail.payload = item.payload;
+      tail.content = item.content;
+      continue;
+    }
+    merged.push({ ...item, repeat: 1 });
+  }
+  return merged;
 }
 
 export function getVisibleRenderRowsFromFlat(

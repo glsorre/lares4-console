@@ -1,15 +1,17 @@
 import { LogStore } from '../../core/log-store.js';
 import { DEFAULT_EVENT_FILTERS } from '../../core/defaults.js';
 import { executeCommand } from '../../core/command-router.js';
-import type { EventFilter, LogEntry, OutputFormat } from '../../core/types.js';
+import type { EventFilter, LogEntry, LogTag, OutputFormat } from '../../core/types.js';
 import { nowIso, safeJson, formatOutput, shouldPrint } from '../../core/utils.js';
-import { createLaresClient, type ClientEnv } from '../../infra/lares-client.js';
+import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
 import { CommandHistory } from '../../core/history.js';
 import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
 import { readUtf8File, resolveDefaultSessionPath, writeUtf8File } from './tauri-fs.js';
 import type { ReplayEvent } from '../../core/replay-engine.js';
 import { ReplayEngine } from '../../core/replay-engine.js';
+import type { Macro, MacroStep } from '../../core/macros.js';
+import { MacroEngine } from '../../core/macro-engine.js';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
@@ -21,6 +23,13 @@ export interface ConnectInput {
   profileName?: string;
 }
 
+export interface ActiveMacroSnapshot {
+  name: string;
+  position: number;
+  total: number;
+  status: 'stopped' | 'playing' | 'paused';
+}
+
 export interface SessionSnapshot {
   connected: boolean;
   connectionStatus: ConnectionStatus;
@@ -30,13 +39,28 @@ export interface SessionSnapshot {
   logEntries: LogEntry[];
   commandLine: string;
   error?: string;
+  logTagFilters: LogTag[] | undefined;
+  activeProfileName: string | undefined;
+  macros: Macro[];
+  activeMacro?: ActiveMacroSnapshot;
+  recordingMacro: boolean;
+  recordingMacroSteps: number;
 }
 
-export type CreateLaresClientFn = (env: ClientEnv) => Promise<Awaited<ReturnType<typeof createLaresClient>>>;
+export type CreateLaresClientFn = (
+  env: ClientEnv,
+  options?: CreateLaresClientOptions,
+) => Promise<Awaited<ReturnType<typeof createLaresClient>>>;
 
 export interface SessionControllerDeps {
   createClient?: CreateLaresClientFn;
   profiles?: DesktopProfilesRepository;
+}
+
+function generateId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `m-${String(Date.now())}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function parseReplayContent(raw: string): ReplayEvent[] {
@@ -77,10 +101,17 @@ export class SessionController {
   private lares: Awaited<ReturnType<typeof createLaresClient>>['lares'] | undefined;
   private socket: Awaited<ReturnType<typeof createLaresClient>>['socket'] | undefined;
   private unsubscribeSocket: (() => void) | undefined;
+  private logTagFilters: LogTag[] | undefined;
+  private activeProfileName: string | undefined;
   private recordFilePath: string | undefined;
   private recordingStartedAtMs = 0;
   private pendingReplayRecord: ReplayEvent[] = [];
   private readonly replayEngine: ReplayEngine;
+  private macros: Macro[] = [];
+  private readonly macroEngine: MacroEngine;
+  private macroRecordingBuffer: MacroStep[] | undefined;
+  private macroRecordingPrevAtMs = 0;
+  private submittingFromMacro = false;
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
@@ -92,6 +123,20 @@ export class SessionController {
       },
       () => {
         this.replayStatus = 'done';
+        this.emit();
+      },
+    );
+    this.macroEngine = new MacroEngine(
+      async (line) => {
+        this.submittingFromMacro = true;
+        try { await this.submit(line); } finally { this.submittingFromMacro = false; }
+      },
+      () => this.emit(),
+      (err, stepIndex) => {
+        this.store.push({
+          level: 'error', tag: 'ERROR',
+          message: `Macro step ${String(stepIndex + 1)} failed: ${err.message}`,
+        });
         this.emit();
       },
     );
@@ -107,6 +152,12 @@ export class SessionController {
   }
 
   snapshot(): SessionSnapshot {
+    const activeMacro = this.macroEngine.name !== undefined ? {
+      name: this.macroEngine.name,
+      position: this.macroEngine.position,
+      total: this.macroEngine.total,
+      status: this.macroEngine.status,
+    } : undefined;
     return {
       connected: this.connected,
       connectionStatus: this.connectionStatus,
@@ -116,21 +167,36 @@ export class SessionController {
       logEntries: this.store.all(),
       commandLine: this.commandLine,
       error: this.error,
+      logTagFilters: this.logTagFilters,
+      activeProfileName: this.activeProfileName,
+      macros: this.macros,
+      activeMacro,
+      recordingMacro: this.macroRecordingBuffer !== undefined,
+      recordingMacroSteps: this.macroRecordingBuffer?.length ?? 0,
     };
   }
 
   async connect(input: ConnectInput): Promise<void> {
     this.connectionStatus = 'connecting';
     this.error = undefined;
+    if (input.profileName) {
+      const profile = await this.profiles.get(input.profileName);
+      this.logTagFilters = profile?.logTagFilters;
+      this.macros = profile?.macros ?? [];
+    } else {
+      this.logTagFilters = undefined;
+      this.macros = [];
+    }
     this.emit();
     try {
       const factory = this.deps.createClient ?? createLaresClient;
-      const client = await factory(input);
+      const client = await factory(input, { onSocketSend: (raw) => this.recordSent(raw) });
       this.lares = client.lares;
       this.socket = client.socket;
       this.unsubscribeSocket = client.socket.messages.subscribe((event) => this.onSocketMessage(event));
       this.connected = true;
       this.connectionStatus = 'online';
+      this.activeProfileName = input.profileName;
       if (input.profileName) await this.profiles.setDefault(input.profileName);
       this.pushSystemMessage(`Connected to ${input.ip}`);
     } catch (error) {
@@ -143,6 +209,9 @@ export class SessionController {
   }
 
   disconnect(): void {
+    this.macroEngine.stop();
+    this.macroRecordingBuffer = undefined;
+    this.macros = [];
     this.unsubscribeSocket?.();
     this.unsubscribeSocket = undefined;
     this.lares?.close();
@@ -150,12 +219,111 @@ export class SessionController {
     this.socket = undefined;
     this.connected = false;
     this.connectionStatus = 'idle';
+    this.error = undefined;
+    this.activeProfileName = undefined;
     this.emit();
   }
 
   setCommandLine(line: string): void {
     this.commandLine = line;
     this.emit();
+  }
+
+  setOutputFormat(fmt: OutputFormat): void {
+    this.outputFormat = fmt;
+    this.emit();
+  }
+
+  clearLogs(): void {
+    this.store.clear();
+    this.emit();
+  }
+
+  setLogTagFilters(filters: LogTag[] | undefined): void {
+    this.logTagFilters = filters;
+    this.emit();
+    if (this.activeProfileName) {
+      const name = this.activeProfileName;
+      void this.profiles.setLogTagFilters(name, filters);
+    }
+  }
+
+  listMacros(): Macro[] {
+    return this.macros;
+  }
+
+  async saveMacro(input: { id?: string; name: string; description?: string; steps: MacroStep[] }): Promise<Macro> {
+    const ts = nowIso();
+    const existingIdx = input.id ? this.macros.findIndex((m) => m.id === input.id) : -1;
+    const existing = existingIdx >= 0 ? this.macros[existingIdx] : undefined;
+    const macro: Macro = {
+      id: existing?.id ?? input.id ?? generateId(),
+      name: input.name,
+      description: input.description,
+      steps: input.steps,
+      createdAt: existing?.createdAt ?? ts,
+      updatedAt: ts,
+    };
+    const next = existingIdx >= 0 ? [...this.macros] : [...this.macros, macro];
+    if (existingIdx >= 0) next[existingIdx] = macro;
+    this.macros = next;
+    this.emit();
+    if (this.activeProfileName) await this.profiles.setMacros(this.activeProfileName, next);
+    return macro;
+  }
+
+  async removeMacro(id: string): Promise<void> {
+    const next = this.macros.filter((m) => m.id !== id);
+    if (next.length === this.macros.length) return;
+    this.macros = next;
+    this.emit();
+    if (this.activeProfileName) await this.profiles.setMacros(this.activeProfileName, next);
+  }
+
+  runMacro(id: string): void {
+    const macro = this.macros.find((m) => m.id === id);
+    if (!macro) return;
+    this.macroEngine.load(macro);
+    this.macroEngine.play();
+  }
+
+  pauseMacro(): void { this.macroEngine.pause(); }
+  resumeMacro(): void { this.macroEngine.play(); }
+  stopMacro(): void { this.macroEngine.stop(); }
+  stepMacro(): void { this.macroEngine.step(); }
+
+  startRecordingMacro(): void {
+    this.macroRecordingBuffer = [];
+    this.macroRecordingPrevAtMs = Date.now();
+    this.emit();
+  }
+
+  async stopRecordingMacro(name: string, description?: string): Promise<Macro | undefined> {
+    const steps = this.macroRecordingBuffer;
+    this.macroRecordingBuffer = undefined;
+    this.emit();
+    if (!steps || steps.length === 0) return undefined;
+    return await this.saveMacro({ name, description, steps });
+  }
+
+  cancelRecordingMacro(): void {
+    this.macroRecordingBuffer = undefined;
+    this.emit();
+  }
+
+  private maybeRecordMacroStep(line: string): void {
+    if (this.submittingFromMacro) return;
+    if (!this.macroRecordingBuffer) return;
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const head = trimmed.split(/\s+/)[0] ?? '';
+    if (head === 'macro' || head === 'record' || head === 'replay') return;
+    const now = Date.now();
+    const delta = this.macroRecordingBuffer.length === 0
+      ? 0
+      : Math.max(0, now - this.macroRecordingPrevAtMs);
+    this.macroRecordingPrevAtMs = now;
+    this.macroRecordingBuffer.push(delta > 0 ? { command: trimmed, delayMs: delta } : { command: trimmed });
   }
 
   historyUp(prefix: string): string | undefined {
@@ -168,10 +336,12 @@ export class SessionController {
 
   async submit(line: string): Promise<void> {
     if (!this.lares || !this.socket) return;
+    this.maybeRecordMacroStep(line);
     this.history.add(line);
     this.commandLine = '';
+    const groupId = `cmd-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
     try {
-      const lines = await executeCommand(line, {
+      const items = await executeCommand(line, {
         lares: this.lares,
         socketSend: this.socket.send,
         outputFormat: this.outputFormat,
@@ -185,15 +355,23 @@ export class SessionController {
         onRecordCommand: async (args) => await this.handleRecordCommand(args),
         onReplayCommand: async (args) => await this.handleReplayCommand(args),
       });
-      for (const text of lines) {
-        if (text === '__EXIT__') {
+      for (const item of items) {
+        if (item === '__EXIT__') {
           this.disconnect();
           continue;
         }
-        this.pushCommandMessage(text);
+        if (typeof item === 'string') {
+          this.pushCommandMessage(item, groupId);
+        } else {
+          this.pushCommandMessage(item.text, groupId, item.payload);
+        }
       }
     } catch (error) {
-      this.store.push({ level: 'error', tag: 'ERROR', message: error instanceof Error ? error.message : String(error) });
+      this.store.push({
+        level: 'error',
+        tag: 'ERROR',
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
     this.emit();
   }
@@ -208,6 +386,10 @@ export class SessionController {
 
   async removeProfile(name: string): Promise<void> {
     await this.profiles.remove(name);
+  }
+
+  async setDefaultProfileName(name: string): Promise<void> {
+    await this.profiles.setDefault(name);
   }
 
   private async exportSession(path?: string): Promise<string> {
@@ -318,26 +500,51 @@ export class SessionController {
     }
     this.maybeRecordEvent(event);
     if (event.type === 'error' && shouldPrint(this.eventFilters, 'errors')) {
-      this.store.push({ level: 'error', tag: 'ERROR', message: typeof event.message === 'string' ? event.message : safeJson(event.message) });
+      const isObj = typeof event.message !== 'string' && event.message !== undefined;
+      this.store.push({
+        level: 'error',
+        tag: 'ERROR',
+        message: typeof event.message === 'string' ? event.message : safeJson(event.message),
+        payload: isObj ? event.message : undefined,
+      });
     } else if (event.type === 'raw' && shouldPrint(this.eventFilters, 'raw')) {
-      this.store.push({ level: 'debug', tag: 'RAW_RX', message: this.coerceEventMessageText(event.message) });
+      const { text, payload } = this.coerceEventMessage(event.message);
+      this.store.push({ level: 'debug', tag: 'RAW_RX', message: text, payload });
     } else if (event.type === 'response' && shouldPrint(this.eventFilters, 'acks')) {
-      this.store.push({ level: 'info', tag: 'ACK', message: this.coerceEventMessageText(event.message) });
+      const { text, payload } = this.coerceEventMessage(event.message);
+      this.store.push({ level: 'info', tag: 'ACK', message: text, payload });
     } else if (event.type === 'change' && shouldPrint(this.eventFilters, 'changes')) {
-      this.store.push({ level: 'info', tag: 'CHANGE', message: this.coerceEventMessageText(event.message) });
+      const { text, payload } = this.coerceEventMessage(event.message);
+      this.store.push({ level: 'info', tag: 'CHANGE', message: text, payload });
     } else if (event.type === 'multi_types' && shouldPrint(this.eventFilters, 'multitypes')) {
-      this.store.push({ level: 'info', tag: 'MULTI_TYPES', message: this.coerceEventMessageText(event.message) });
+      const { text, payload } = this.coerceEventMessage(event.message);
+      this.store.push({ level: 'info', tag: 'BULK', message: text, payload });
     }
     this.emit();
   }
 
-  private coerceEventMessageText(raw: string | Record<string, unknown> | undefined): string {
-    if (raw === undefined) return '';
-    if (typeof raw !== 'string') return formatOutput(raw, this.outputFormat);
+  private recordSent(raw: string): void {
+    if (!shouldPrint(this.eventFilters, 'sent')) return;
+    let payload: unknown;
+    try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
+    const cmdObj = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined;
+    const cmdName = typeof cmdObj?.CMD === 'string' ? cmdObj.CMD : 'CMD';
+    const cmdId = cmdObj?.ID !== undefined ? String(cmdObj.ID) : `t${String(Date.now())}`;
+    const groupId = `rawtx-${cmdId}`;
+    const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
+    this.store.push({ level: 'info', tag: 'RAW_TX', groupId, message: `→ ${cmdName}` });
+    this.store.push({ level: 'info', tag: 'RAW_TX', groupId, message: text, payload });
+    this.emit();
+  }
+
+  private coerceEventMessage(raw: string | Record<string, unknown> | undefined): { text: string; payload?: unknown } {
+    if (raw === undefined) return { text: '' };
+    if (typeof raw !== 'string') return { text: formatOutput(raw, this.outputFormat), payload: raw };
     try {
-      return formatOutput(JSON.parse(raw), this.outputFormat);
+      const parsed = JSON.parse(raw) as unknown;
+      return { text: formatOutput(parsed, this.outputFormat), payload: parsed };
     } catch {
-      return raw;
+      return { text: raw };
     }
   }
 
@@ -351,7 +558,7 @@ export class SessionController {
         : event.type === 'change'
           ? 'CHANGE'
           : event.type === 'multi_types'
-            ? 'MULTI_TYPES'
+            ? 'BULK'
             : 'RAW_RX';
     const level = event.type === 'error' ? 'error' : event.type === 'raw' ? 'debug' : 'info';
     this.pendingReplayRecord.push({
@@ -365,11 +572,14 @@ export class SessionController {
     });
   }
 
-  private pushCommandMessage(text: string): void {
-    const lines = text.split('\n');
-    for (const line of lines) {
-      this.store.push({ level: 'info', tag: 'CMD', message: line.length > 0 ? line : ' ' });
-    }
+  private pushCommandMessage(text: string, groupId?: string, payload?: unknown): void {
+    this.store.push({
+      level: 'info',
+      tag: 'LOG',
+      message: text.length > 0 ? text : ' ',
+      groupId,
+      payload,
+    });
   }
 
   private pushSystemMessage(text: string): void {

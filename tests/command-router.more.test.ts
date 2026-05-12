@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { EventFilter } from '../src/core/types.js';
-import { executeCommand } from '../src/core/command-router.js';
+import { executeCommand, type CommandOutputItem } from '../src/core/command-router.js';
+
+function textOf(item: CommandOutputItem | undefined): string {
+  if (item === undefined) return '';
+  return typeof item === 'string' ? item : item.text;
+}
 
 describe('command router additional coverage', () => {
   const baseCtx = {
@@ -42,7 +47,7 @@ describe('command router additional coverage', () => {
       },
     });
     assert.deepEqual(sent, ['X', 'Y', { a: 1, b: 'v' }]);
-    assert.match(lines[0] ?? '', /raw send X Y/);
+    assert.match(textOf(lines[0]), /raw send X Y/);
   });
 
   it('reports invalid json for raw send', async () => {
@@ -70,25 +75,25 @@ describe('command router additional coverage', () => {
         triggerScenario: (id: number) => { calls.push(`scenario:${String(id)}`); },
       },
     };
-    assert.match((await executeCommand('lights on 11', ctx))[0] ?? '', /ok lights on id=11/);
-    assert.match((await executeCommand('covers to 3 90', ctx))[0] ?? '', /ok covers to id=3/);
-    assert.match((await executeCommand('scenario trigger 7', ctx))[0] ?? '', /ok scenario trigger id=7/);
+    assert.match(textOf((await executeCommand('lights on 11', ctx))[0]), /ok lights on id=11/);
+    assert.match(textOf((await executeCommand('covers to 3 90', ctx))[0]), /ok covers to id=3/);
+    assert.match(textOf((await executeCommand('scenario trigger 7', ctx))[0]), /ok scenario trigger id=7/);
     assert.deepEqual(calls, ['switchOn:11', 'rollTo:3:90', 'scenario:7']);
   });
 
   it('supports format and export commands', async () => {
     const formatLines = await executeCommand('format json', baseCtx);
-    assert.equal(formatLines[0], 'Output format set to: json');
+    assert.equal(textOf(formatLines[0]), 'Output format set to: json');
 
     const exportLines = await executeCommand('export custom.log', baseCtx);
-    assert.equal(exportLines[0], 'Session exported to: custom.log');
+    assert.equal(textOf(exportLines[0]), 'Session exported to: custom.log');
   });
 
   it('returns command help lines', async () => {
     const lines = await executeCommand('help', baseCtx);
     assert.ok(lines.length > 6);
-    assert.equal(lines[0], 'Commands:');
-    assert.ok(lines.some((line) => line.includes('raw send')));
+    assert.equal(textOf(lines[0]), 'Commands:');
+    assert.ok(lines.some((line) => textOf(line).includes('raw send')));
   });
 
   it('routes record/replay commands to runtime handlers', async () => {
@@ -100,8 +105,8 @@ describe('command router additional coverage', () => {
       ...baseCtx,
       onReplayCommand: async (args) => [`replay:${args.join(',')}`],
     });
-    assert.equal(record[0], 'record:start,out.ndjson');
-    assert.equal(replay[0], 'replay:play');
+    assert.equal(textOf(record[0]), 'record:start,out.ndjson');
+    assert.equal(textOf(replay[0]), 'replay:play');
   });
 
   it('supports new entity command families', async () => {
@@ -116,11 +121,11 @@ describe('command router additional coverage', () => {
         setThermostatMode: (id: number, mode: string) => { calls.push(`setThermostatMode:${String(id)}:${mode}`); },
       },
     };
-    assert.match((await executeCommand('zones arm 2', ctx))[0] ?? '', /ok zones arm id=2/);
-    assert.match((await executeCommand('outputs toggle 4', ctx))[0] ?? '', /ok outputs toggle id=4/);
-    assert.match((await executeCommand('switches on 5', ctx))[0] ?? '', /ok switches on id=5/);
-    assert.match((await executeCommand('gates open 6', ctx))[0] ?? '', /ok gates open id=6/);
-    assert.match((await executeCommand('thermostats mode 1 heat', ctx))[0] ?? '', /ok thermostats mode id=1 value=heat/);
+    assert.match(textOf((await executeCommand('zones arm 2', ctx))[0]), /ok zones arm id=2/);
+    assert.match(textOf((await executeCommand('outputs toggle 4', ctx))[0]), /ok outputs toggle id=4/);
+    assert.match(textOf((await executeCommand('switches on 5', ctx))[0]), /ok switches on id=5/);
+    assert.match(textOf((await executeCommand('gates open 6', ctx))[0]), /ok gates open id=6/);
+    assert.match(textOf((await executeCommand('thermostats mode 1 heat', ctx))[0]), /ok thermostats mode id=1 value=heat/);
     assert.deepEqual(calls, ['armZone:2', 'outputToggle:4', 'openGate:6', 'setThermostatMode:1:heat']);
   });
 });

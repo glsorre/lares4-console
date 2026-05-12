@@ -32,7 +32,7 @@ export const STATE_SCOPES = [
   'outputs',
 ] as const;
 
-export const EVENT_FILTERS = ['acks', 'errors', 'multitypes', 'raw', 'changes'] as const;
+export const EVENT_FILTERS = ['acks', 'errors', 'multitypes', 'raw', 'changes', 'sent'] as const;
 
 export const SECONDARY_COMMANDS: Record<string, string[]> = {
   format: ['pretty', 'json'],
