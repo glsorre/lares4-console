@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   Activity,
   AlertTriangle,
@@ -14,6 +15,8 @@ import {
   Terminal,
 } from 'lucide-react';
 import { ProFeatureLock } from './ProFeatureLock';
+import { PaneEmpty } from './PaneEmpty.js';
+import { useSessionController } from '@pro/tabs/context.js';
 import { buildMessageListItems, formatLogClock } from '../../core/log-view.js';
 import { compileChipFilters, extractFreeTextTerms } from '../../core/log-query.js';
 import type { LogEntry, LogTag } from '../../core/types.js';
@@ -54,6 +57,8 @@ interface LogsListPaneProps {
   annotationsLicensed: boolean;
 }
 
+const ROW_ENTER_CAP = 30;
+
 export function LogsListPane({
   entries,
   selectedId,
@@ -65,7 +70,11 @@ export function LogsListPane({
   onPinnedIdChange,
   annotationsLicensed,
 }: LogsListPaneProps) {
+  const { snapshot } = useSessionController();
+  const connected = snapshot.connected;
   const [followTail, setFollowTail] = useState<boolean>(true);
+  const reduceMotion = useReducedMotion();
+  const animateFromIndex = (idx: number, total: number) => !reduceMotion && idx >= total - ROW_ENTER_CAP;
 
   const chipFilters = useMemo(() => compileChipFilters(searchInput), [searchInput]);
   const searchTerms = useMemo(() => extractFreeTextTerms(searchInput), [searchInput]);
@@ -150,23 +159,17 @@ export function LogsListPane({
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
       <CardContent className="relative flex min-h-0 flex-1 flex-col px-0 pb-0">
         {items.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <div className="bg-muted/50 text-muted-foreground/50 flex size-9 items-center justify-center rounded-full">
-              <Activity className="size-4" aria-hidden />
-            </div>
-            <div className="space-y-1">
-              <p className="text-foreground/75 text-sm font-medium">
-                {entries.length === 0
-                  ? 'No messages yet'
-                  : 'No messages match search'}
-              </p>
-              <p className="text-muted-foreground max-w-[16rem] text-xs leading-relaxed">
-                {entries.length === 0
-                  ? 'Run a command to see responses and events.'
-                  : 'Refine the query (source:, tag:, level:, id:, cmd:) or clear it.'}
-              </p>
-            </div>
-          </div>
+          <PaneEmpty
+            icon={Terminal}
+            title={entries.length === 0 ? 'No messages yet' : 'No messages match search'}
+            description={
+              entries.length === 0
+                ? connected
+                  ? 'Send a command to see live responses, ACKs, and change events.'
+                  : 'Connect a panel from the sidebar to start streaming wire traffic.'
+                : 'Refine the query (source:, tag:, level:, id:, cmd:) or clear it.'
+            }
+          />
         ) : (
           <ScrollArea className="min-h-0 flex-1" ref={scrollRootRef}>
             <div
@@ -226,7 +229,7 @@ export function LogsListPane({
                   />
                 </div>
               )}
-              {items.map((item) => (
+              {items.map((item, idx) => (
                 <Row
                   key={item.id}
                   item={item}
@@ -238,6 +241,7 @@ export function LogsListPane({
                   annotationsLicensed={annotationsLicensed}
                   searchTerms={searchTerms}
                   searchMatch={matchByItemId?.get(item.id)}
+                  animateEnter={animateFromIndex(idx, items.length)}
                   onSelect={onSelect}
                   onToggleBookmark={onToggleBookmark}
                   onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
@@ -275,6 +279,7 @@ interface RowProps {
   annotationsLicensed: boolean;
   searchTerms: string[];
   searchMatch?: boolean;
+  animateEnter?: boolean;
   onSelect: (id: string) => void;
   onToggleBookmark: (id: string) => void;
   onTogglePin: () => void;
@@ -315,7 +320,7 @@ const HIGHLIGHT_BG: Record<NonNullable<LogEntry['highlight']>, string> = {
 function Row({
   item, selected, bookmarked, pinned, rowIdPrefix, meta,
   annotationsLicensed,
-  searchTerms, searchMatch,
+  searchTerms, searchMatch, animateEnter,
   onSelect, onToggleBookmark, onTogglePin,
 }: RowProps) {
   const isError = item.tag === 'ERROR';
@@ -325,20 +330,29 @@ function Row({
   const isMatch = hasSearch && searchMatch === true;
   const isDimmed = hasSearch && searchMatch === false;
   return (
-    <div
+    <motion.div
       id={`${rowIdPrefix}-${item.id}`}
       role="option"
       aria-selected={selected}
+      initial={animateEnter ? { opacity: 0, y: 4 } : false}
+      animate={animateEnter ? { opacity: 1, y: 0 } : undefined}
+      transition={animateEnter ? { duration: 0.12, ease: [0.22, 1, 0.36, 1] } : undefined}
       className={cn(
-        'hover:bg-muted/80 border-border/40 group grid w-full cursor-pointer items-center gap-x-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-[opacity,background-color,box-shadow]',
-        'grid-cols-[1rem_5rem_3.5rem_1fr_auto]',
+        'hover:bg-muted/80 group relative grid min-h-9 w-full cursor-pointer items-center gap-x-3 rounded-lg border border-transparent pr-2 pl-3 py-1 text-left transition-[opacity,background-color,box-shadow]',
+        'grid-cols-[1rem_minmax(3.5rem,max-content)_4.5rem_1fr_auto]',
         isError && !selected && 'bg-red-50/60 dark:bg-red-950/30',
         highlightCls && !selected && highlightCls,
-        selected && 'border-primary/35 bg-accent/35 shadow-sm ring-1 ring-primary/20',
-        pinned && 'border-primary/50 ring-1 ring-primary/30',
+        selected && 'shadow-sm',
+        pinned && !selected && 'border-primary/40 ring-1 ring-primary/25',
         isMatch && !selected && 'ring-1 ring-[oklch(var(--accent)/0.55)] bg-[oklch(var(--accent)/0.06)]',
         isDimmed && 'opacity-45',
       )}
+      style={selected
+        ? {
+            backgroundColor: 'var(--row-selected-bg)',
+            boxShadow: 'inset 2px 0 0 0 var(--row-selected-bar)',
+          }
+        : undefined}
       onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => {
         event.currentTarget.parentElement?.focus();
@@ -348,23 +362,29 @@ function Row({
       <Icon className="size-3.5 text-muted-foreground shrink-0" aria-hidden />
       <span
         className={cn(
-          'rounded px-1.5 py-0.5 text-center font-mono text-[0.65rem] font-semibold tracking-wide uppercase',
+          'rounded px-1 py-0 text-center font-mono text-[0.6rem] font-medium tracking-wide uppercase leading-tight',
           getTagClasses(item.tag),
         )}
       >
         {item.tag}
       </span>
-      <span className="text-muted-foreground font-mono text-[0.65rem] tabular-nums opacity-70">
+      <span className="text-muted-foreground font-mono text-meta tabular-nums opacity-70">
         {formatLogClock(item.ts)}
       </span>
-      <span className="min-w-0 truncate text-sm leading-snug">
+      <span
+        className="min-w-0 truncate text-row leading-snug"
+        style={{
+          maskImage: 'linear-gradient(to right, black 92%, transparent)',
+          WebkitMaskImage: 'linear-gradient(to right, black 92%, transparent)',
+        }}
+      >
         {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
         {item.repeat !== undefined && item.repeat > 1 && (
-          <span className="text-muted-foreground ml-1.5 font-mono text-[0.7rem] tabular-nums">×{item.repeat}</span>
+          <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">×{item.repeat}</span>
         )}
         {meta?.latencyMs !== undefined && (
           <span
-            className="bg-muted/70 text-muted-foreground border-border/50 ml-1.5 inline-flex items-center gap-0.5 rounded border px-1 py-0 align-middle font-mono text-[0.6rem] tabular-nums"
+            className="bg-muted/70 text-muted-foreground border-border/50 ml-1.5 inline-flex items-center gap-0.5 rounded border px-1 py-0 align-middle font-mono text-meta tabular-nums"
             title="Round-trip latency"
           >
             {meta.latencyMs}ms
@@ -432,7 +452,7 @@ function Row({
           />
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 

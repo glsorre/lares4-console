@@ -67,14 +67,14 @@ describe('topology', () => {
     assert.equal(s.groups[0].count, 1);
   });
 
-  it('groups ordered zones-lights-covers etc', () => {
+  it('groups ordered alphabetically by label', () => {
     const s = buildTopology({
       lights: [{ ID: 1, STA: 'ON' }],
       zones: [{ ID: 1, STA: 'ARMED' }],
       thermostats: [{ ID: 1, STA: 'HEAT' }],
     });
     const kinds = s.groups.map((g) => g.kind);
-    assert.deepEqual(kinds, ['zones', 'lights', 'thermostats']);
+    assert.deepEqual(kinds, ['lights', 'thermostats', 'zones']);
   });
 
   it('handles object source (not array)', () => {

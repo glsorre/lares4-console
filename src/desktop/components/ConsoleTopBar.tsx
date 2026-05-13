@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, RefObject } from 'react';
 import {
-  Bell,
-  Bookmark as BookmarkIcon,
   Eraser,
   Globe,
   Hash,
@@ -52,7 +50,6 @@ import type { LogEntry, LogLevel, LogSource, LogTag } from '../../core/types.js'
 import { formatReplayLabel } from '../runtime/status-chips.js';
 import { getTagDotClass } from '../runtime/log-tag-classes.js';
 import type { SessionSnapshot } from '../runtime/session-controller.js';
-import { ProFeatureLock } from './ProFeatureLock.js';
 import { StatsCluster } from './StatsBar.js';
 
 interface ConsoleTopBarProps {
@@ -60,18 +57,12 @@ interface ConsoleTopBarProps {
   msgCount: number;
   sidebarOpen: boolean;
   topologyRailOpen: boolean;
-  bookmarkCount: number;
-  annotationsLicensed: boolean;
-  triggersLicensed: boolean;
-  enabledTriggerCount: number;
   searchInput: string;
   onSearchInputChange: (value: string) => void;
   searchPulseKey?: number;
   onToggleSidebar: () => void;
   onToggleTopologyRail: () => void;
   onClearLogs: () => void;
-  onOpenTriggers: () => void;
-  onOpenBookmarks: () => void;
   onSelectTopId: (id: string) => void;
 }
 
@@ -80,18 +71,12 @@ export function ConsoleTopBar({
   msgCount,
   sidebarOpen,
   topologyRailOpen,
-  bookmarkCount,
-  annotationsLicensed,
-  triggersLicensed,
-  enabledTriggerCount,
   searchInput,
   onSearchInputChange,
   searchPulseKey,
   onToggleSidebar,
   onToggleTopologyRail,
   onClearLogs,
-  onOpenTriggers,
-  onOpenBookmarks,
   onSelectTopId,
 }: ConsoleTopBarProps) {
   const [tick, setTick] = useState(0);
@@ -186,21 +171,23 @@ export function ConsoleTopBar({
       </div>
 
       {/* Middle: log search with chip tokens */}
-      <div className="order-3 flex w-full min-w-0 items-center gap-2 lg:order-none lg:w-auto lg:flex-1 lg:max-w-xl">
-        <SearchChipsInput
-          value={searchInput}
-          onChange={onSearchInputChange}
-          entries={snapshot.logEntries}
-          inputRef={searchInputRef}
-          pulse={pulse}
-          error={compiledQuery.error}
-        />
-        {compiledQuery.error && (
-          <span className="text-destructive shrink-0 font-mono text-[0.65rem]" role="alert">
-            {compiledQuery.error}
-          </span>
-        )}
-      </div>
+      {snapshot.connected && (
+        <div className="order-3 flex w-full min-w-0 items-center gap-2 lg:order-none lg:w-auto lg:flex-1 lg:max-w-xl">
+          <SearchChipsInput
+            value={searchInput}
+            onChange={onSearchInputChange}
+            entries={snapshot.logEntries}
+            inputRef={searchInputRef}
+            pulse={pulse}
+            error={compiledQuery.error}
+          />
+          {compiledQuery.error && (
+            <span className="text-destructive shrink-0 font-mono text-[0.65rem]" role="alert">
+              {compiledQuery.error}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Right: actions */}
       <div className="flex items-center gap-1">
@@ -245,66 +232,6 @@ export function ConsoleTopBar({
           </DropdownMenu>
         )}
 
-        {annotationsLicensed ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
-                onClick={onOpenBookmarks}
-                aria-label="Open bookmarks"
-              >
-                <BookmarkIcon className="size-3.5" aria-hidden />
-                Bookmarks
-                {bookmarkCount > 0 && (
-                  <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">
-                    {bookmarkCount}
-                  </span>
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Bookmarks tab</TooltipContent>
-          </Tooltip>
-        ) : (
-          <ProFeatureLock
-            featureId="annotations"
-            label="Bookmarks"
-            tooltip="Bookmarks — unlock annotations"
-          />
-        )}
-
-        {triggersLicensed ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
-                onClick={onOpenTriggers}
-                aria-label="Manage trigger rules"
-              >
-                <Bell className="size-3.5" aria-hidden />
-                Triggers
-                {enabledTriggerCount > 0 && (
-                  <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">
-                    {enabledTriggerCount}
-                  </span>
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Trigger rules</TooltipContent>
-          </Tooltip>
-        ) : (
-          <ProFeatureLock
-            featureId="triggers"
-            label="Triggers"
-            tooltip="Triggers — unlock"
-          />
-        )}
-
         {msgCount > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -324,7 +251,7 @@ export function ConsoleTopBar({
           </Tooltip>
         )}
 
-        {!topologyRailOpen && (
+        {snapshot.connected && !topologyRailOpen && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
-import { Bookmark as BookmarkIcon, FileSearch } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Bell, Bookmark as BookmarkIcon, FileSearch, Zap } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BookmarksPane } from '@pro/annotations/ui/BookmarksPane.js';
@@ -12,12 +13,14 @@ import { ConsoleTopBar } from '../components/ConsoleTopBar.js';
 import { LogDetailPane } from '../components/LogDetailPane.js';
 import { LogsListPane } from '../components/LogsListPane.js';
 import { TopologyPane } from '../components/TopologyPane.js';
-import { TriggersDialog } from '@pro/triggers/ui/TriggersDialog.js';
+import { TriggersPane } from '@pro/triggers/ui/TriggersPane.js';
+import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
+import type { FeatureId } from '../runtime/commercial-license-prefs.js';
 
-type DetailTab = 'detail' | 'bookmarks';
+type DetailTab = 'detail' | 'bookmarks' | 'triggers' | 'macros';
 
 const TOPOLOGY_RAIL_KEY = 'lares4.topologyRailOpen';
 const LEGACY_LOG_SOURCE_FILTER_KEY = 'lares4.logSourceFilter';
@@ -47,13 +50,13 @@ export function ConsolePage() {
   const { controller, snapshot } = useSessionController();
   const { sidebarOpen, toggleSidebar } = useOutletContext<LayoutOutletContext>();
   const wide = useWideLayout();
+  const reduceMotion = useReducedMotion();
   const [command, setCommand] = useState('');
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [searchInput, setSearchInput] = useState<string>('');
   const [pinnedId, setPinnedId] = useState<string | undefined>(undefined);
   const [detailTab, setDetailTab] = useState<DetailTab>('detail');
-  const [triggersOpen, setTriggersOpen] = useState(false);
-  const [annotationsLockOpen, setAnnotationsLockOpen] = useState(false);
+  const [lockFeature, setLockFeature] = useState<FeatureId | null>(null);
   const [topologyRailOpen, setTopologyRailOpen] = useState<boolean>(readRailOpen);
   const [railSheetOpen, setRailSheetOpen] = useState(false);
   const [searchPulseKey, setSearchPulseKey] = useState(0);
@@ -88,6 +91,13 @@ export function ConsolePage() {
     try { window.localStorage.setItem(TOPOLOGY_RAIL_KEY, JSON.stringify(topologyRailOpen)); } catch { /* ignore */ }
   }, [topologyRailOpen]);
 
+  useEffect(() => {
+    if (snapshot.connected) return;
+    setDetailTab('detail');
+    setTopologyRailOpen(false);
+    setRailSheetOpen(false);
+  }, [snapshot.connected]);
+
   const canSubmit = useMemo(() => snapshot.connected && command.trim().length > 0, [snapshot.connected, command]);
   const msgCount = snapshot.logEntries.length;
   const bookmarkedIds = useMemo(
@@ -113,14 +123,6 @@ export function ConsolePage() {
     setDetailTab('detail');
   }
 
-  function openBookmarksTab() {
-    if (!annotationsLicensed) {
-      setAnnotationsLockOpen(true);
-      return;
-    }
-    setDetailTab('bookmarks');
-  }
-
   function openTopologyRail() {
     if (wide) {
       setTopologyRailOpen(true);
@@ -142,40 +144,78 @@ export function ConsolePage() {
     void controller.submit('state all');
   }
 
+  const macrosLicensed = snapshot.licensed.macros;
+  const enabledTriggerCount = snapshot.triggers.filter((r) => r.enabled).length;
+
   const detailTabs = useMemo(() => {
-    const tabs: Array<{ value: DetailTab; label: string; icon: typeof FileSearch; badge?: number; locked?: boolean }> = [
+    const tabs: Array<{
+      value: DetailTab;
+      label: string;
+      icon: typeof FileSearch;
+      badge?: number;
+      lockFeature?: FeatureId;
+    }> = [
       { value: 'detail', label: 'Detail', icon: FileSearch },
       {
         value: 'bookmarks',
         label: 'Bookmarks',
         icon: BookmarkIcon,
         badge: snapshot.bookmarks.length || undefined,
-        locked: !annotationsLicensed,
+        lockFeature: annotationsLicensed ? undefined : 'annotations',
+      },
+      {
+        value: 'triggers',
+        label: 'Triggers',
+        icon: Bell,
+        badge: enabledTriggerCount || undefined,
+        lockFeature: triggersLicensed ? undefined : 'triggers',
+      },
+      {
+        value: 'macros',
+        label: 'Macros',
+        icon: Zap,
+        badge: snapshot.macros.length || undefined,
+        lockFeature: macrosLicensed ? undefined : 'macros',
       },
     ];
     return tabs;
-  }, [snapshot.bookmarks.length, annotationsLicensed]);
+  }, [
+    snapshot.bookmarks.length,
+    snapshot.macros.length,
+    enabledTriggerCount,
+    annotationsLicensed,
+    triggersLicensed,
+    macrosLicensed,
+  ]);
+
+  function handleTabChange(value: string) {
+    const tab = detailTabs.find((t) => t.value === value);
+    if (tab?.lockFeature) {
+      setLockFeature(tab.lockFeature);
+      return;
+    }
+    setDetailTab(value as DetailTab);
+  }
 
   const detailContent = (
     <Tabs
       value={detailTab}
-      onValueChange={(value) => {
-        if (value === 'bookmarks' && !annotationsLicensed) {
-          setAnnotationsLockOpen(true);
-          return;
-        }
-        setDetailTab(value as DetailTab);
-      }}
+      onValueChange={handleTabChange}
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5"
     >
       <TabsList variant="line" className="self-start">
         {detailTabs.map((tab) => {
           const Icon = tab.icon;
           return (
-            <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5 text-xs">
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              disabled={!snapshot.connected}
+              className="gap-1.5 text-xs"
+            >
               <Icon className="size-3.5" aria-hidden />
               <span>{tab.label}</span>
-              {tab.locked && (
+              {tab.lockFeature && (
                 <span className="text-primary text-[0.65rem] font-medium">Unlock</span>
               )}
               {tab.badge !== undefined && (
@@ -204,6 +244,25 @@ export function ConsolePage() {
           onExport={() => controller.exportBookmarks()}
           isLicensed={annotationsLicensed}
         />
+      </TabsContent>
+      <TabsContent value="triggers" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TriggersPane
+          triggers={snapshot.triggers}
+          onSave={(next) => controller.saveTriggers(next)}
+          isLicensed={triggersLicensed}
+          disabledReason={
+            !triggersLicensed
+              ? undefined
+              : !snapshot.connected
+                ? 'Connect to a panel before editing triggers.'
+                : !snapshot.activeProfileName
+                  ? 'Triggers persist per connection profile. Load a saved profile to keep rules across sessions.'
+                  : undefined
+          }
+        />
+      </TabsContent>
+      <TabsContent value="macros" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <MacrosPane isLicensed={macrosLicensed} />
       </TabsContent>
     </Tabs>
   );
@@ -277,46 +336,37 @@ export function ConsolePage() {
         msgCount={msgCount}
         sidebarOpen={sidebarOpen}
         topologyRailOpen={wide ? topologyRailOpen : railSheetOpen}
-        bookmarkCount={snapshot.bookmarks.length}
-        annotationsLicensed={annotationsLicensed}
-        triggersLicensed={triggersLicensed}
-        enabledTriggerCount={snapshot.triggers.filter((r) => r.enabled).length}
         searchInput={searchInput}
         onSearchInputChange={setSearchInput}
         searchPulseKey={searchPulseKey}
         onToggleSidebar={toggleSidebar}
         onToggleTopologyRail={openTopologyRail}
         onClearLogs={() => controller.clearLogs()}
-        onOpenTriggers={() => setTriggersOpen(true)}
-        onOpenBookmarks={openBookmarksTab}
         onSelectTopId={filterById}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1">
-        {wide ? panelsHorizontal : panelsVertical}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={wide ? 'panels-h' : 'panels-v'}
+            initial={reduceMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={reduceMotion ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className="flex min-h-0 min-w-0 flex-1"
+          >
+            {wide ? panelsHorizontal : panelsVertical}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
-      <TriggersDialog
-        open={triggersOpen}
-        onOpenChange={setTriggersOpen}
-        triggers={snapshot.triggers}
-        onSave={(next: typeof snapshot.triggers) => controller.saveTriggers(next)}
-        isLicensed={triggersLicensed}
-        disabledReason={
-          !triggersLicensed
-            ? undefined
-            : !snapshot.connected
-              ? 'Connect to a panel before editing triggers.'
-              : !snapshot.activeProfileName
-                ? 'Triggers persist per connection profile. Load a saved profile to keep rules across sessions.'
-                : undefined
-        }
-      />
-      <CommercialLicenseDialog
-        open={annotationsLockOpen}
-        onOpenChange={setAnnotationsLockOpen}
-        featureId="annotations"
-      />
+      {lockFeature && (
+        <CommercialLicenseDialog
+          open={lockFeature !== null}
+          onOpenChange={(open) => { if (!open) setLockFeature(null); }}
+          featureId={lockFeature}
+        />
+      )}
 
       {snapshot.connected && (
         <CommandPane

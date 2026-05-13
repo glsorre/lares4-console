@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { getTagClasses } from '@/desktop/runtime/log-tag-classes.js';
+import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
+import { useSessionController } from '@pro/tabs/context.js';
 
 interface BookmarksPaneProps {
   bookmarks: Bookmark[];
@@ -25,6 +27,8 @@ interface BookmarksPaneProps {
 export function BookmarksPane({
   bookmarks, entries, selectedId, onSelect, onRemove, onUpdateNote, onExport, isLicensed,
 }: BookmarksPaneProps) {
+  const { snapshot } = useSessionController();
+  const connected = snapshot.connected;
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState('');
   const [exportStatus, setExportStatus] = useState<string | undefined>(undefined);
@@ -46,49 +50,52 @@ export function BookmarksPane({
 
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
-      <div className="border-border/60 flex h-[46px] shrink-0 items-center justify-between gap-2 border-b px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-medium shrink-0">Bookmarks</span>
-          <span className="text-muted-foreground font-mono text-xs tabular-nums shrink-0">{bookmarks.length}</span>
-        </div>
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-3">
         {isLicensed && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={() => void handleExport()}
-            disabled={bookmarks.length === 0}
-            aria-label="Export bookmarks"
-          >
-            <Download className="size-3.5" aria-hidden />
-            Export
-          </Button>
-        )}
-      </div>
-      {exportStatus && (
-        <div className="text-muted-foreground border-border/60 border-b px-4 py-1 text-xs">{exportStatus}</div>
-      )}
-      <CardContent className="flex min-h-0 flex-1 flex-col px-0 pb-0">
-        {bookmarks.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <div className="bg-muted/50 text-muted-foreground/50 flex size-9 items-center justify-center rounded-full">
-              <BookmarkIcon className="size-4" aria-hidden />
-            </div>
-            <div className="space-y-1">
-              <p className="text-foreground/75 text-sm font-medium">No bookmarks</p>
-              <p className="text-muted-foreground max-w-[16rem] text-xs leading-relaxed">
-                {isLicensed
-                  ? 'Click the star on any log row to bookmark it. Bookmarks persist until you clear the log buffer.'
-                  : 'Bookmarks are a commercial feature. Unlock to start pinning and annotating log entries.'}
-              </p>
-            </div>
-            {!isLicensed && (
-              <div className="pt-2">
-                <ProFeatureLock featureId="annotations" label="Unlock bookmarks" />
-              </div>
-            )}
+          <div className="flex items-center justify-end gap-2">
+            <span className="text-muted-foreground font-mono text-xs tabular-nums">{bookmarks.length}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => void handleExport()}
+              disabled={bookmarks.length === 0}
+              aria-label="Export bookmarks"
+            >
+              <Download className="size-3.5" aria-hidden />
+              Export
+            </Button>
           </div>
+        )}
+        {exportStatus && (
+          <div className="text-muted-foreground text-xs">{exportStatus}</div>
+        )}
+        {bookmarks.length === 0 ? (
+          !isLicensed ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <div className="bg-muted/50 text-muted-foreground/60 ring-border/40 flex size-10 items-center justify-center rounded-full ring-1">
+                <BookmarkIcon className="size-4" aria-hidden />
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-foreground text-sm font-semibold tracking-tight">No bookmarks</p>
+                <p className="text-muted-foreground mx-auto max-w-[18rem] text-xs leading-relaxed">
+                  Bookmarks are a commercial feature. Unlock to start pinning and annotating log entries.
+                </p>
+              </div>
+              <ProFeatureLock featureId="annotations" label="Unlock bookmarks" />
+            </div>
+          ) : (
+            <PaneEmpty
+              icon={BookmarkIcon}
+              title="No bookmarks"
+              description={
+                connected
+                  ? 'Click the star on any log row to bookmark it. Bookmarks persist until you clear the log buffer.'
+                  : 'Connect a panel from the sidebar to capture log rows you can bookmark.'
+              }
+            />
+          )
         ) : (
           <ScrollArea className="min-h-0 flex-1">
             <ul className="flex flex-col gap-1 px-2 py-2" role="list">

@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Check, ChevronDown, ChevronRight, Copy, FileSearch, WrapText } from 'lucide-react';
+import { PaneEmpty } from './PaneEmpty.js';
+import { useSessionController } from '@pro/tabs/context.js';
 import { buildMessageListItems, formatLogClock } from '../../core/log-view.js';
 import { prettyLines, redactSecrets, safeJson } from '../../core/utils.js';
 import { decodePayload } from '../../core/protocol-dict.js';
@@ -22,13 +25,25 @@ interface LogDetailPaneProps {
 }
 
 export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChange }: LogDetailPaneProps) {
+  const { snapshot } = useSessionController();
+  const connected = snapshot.connected;
   const [wrapLines, setWrapLines] = useState(true);
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('decoded');
   const contentRef = useRef<HTMLPreElement>(null);
+  const reduceMotion = useReducedMotion();
+  const fade = reduceMotion
+    ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 1 }, transition: { duration: 0 } }
+    : {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        transition: { duration: 0.12, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+      };
 
   const items = useMemo(() => buildMessageListItems(entries), [entries]);
   const selected = items.find((item) => item.id === selectedId);
+  const hasContent = connected && selected !== undefined;
 
   const decoded = useMemo(() => {
     if (!selected) return undefined;
@@ -76,24 +91,24 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
       <div className="border-border/60 flex h-9 shrink-0 items-center justify-between gap-2 border-b px-3">
-        <div className="flex min-w-0 items-center gap-x-1.5 overflow-hidden">
+        <div className="flex min-w-0 items-center gap-x-2 overflow-hidden">
           {selected ? (
-            <div className="text-muted-foreground flex min-w-0 items-center gap-x-1.5 overflow-hidden text-xs">
-              <span className={cn('shrink-0 rounded px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold uppercase', getTagClasses(selected.tag))}>
+            <div className="text-muted-foreground flex min-w-0 items-center gap-x-2 overflow-hidden">
+              <span className={cn('shrink-0 rounded px-1 py-0 font-mono text-[0.6rem] font-medium uppercase tracking-wide leading-tight', getTagClasses(selected.tag))}>
                 {selected.tag}
               </span>
-              <span className="font-mono tabular-nums shrink-0">{formatLogClock(selected.ts)}</span>
+              <span className="font-mono text-meta tabular-nums shrink-0">{formatLogClock(selected.ts)}</span>
               <span aria-hidden className="shrink-0 opacity-40">·</span>
-              <span className="font-mono text-[0.7rem] shrink-0">view {effectiveMode}</span>
+              <span className="font-mono text-meta uppercase tracking-wider shrink-0">view {effectiveMode}</span>
               {lineCount > 1 && (
                 <>
                   <span aria-hidden className="shrink-0 opacity-40">·</span>
-                  <span className="font-mono tabular-nums text-[0.7rem] shrink-0">{lineCount} lines</span>
+                  <span className="font-mono tabular-nums text-meta shrink-0">{lineCount} lines</span>
                 </>
               )}
             </div>
           ) : (
-            <span className="text-muted-foreground text-xs">No selection</span>
+            <span className="text-muted-foreground text-meta">No selection</span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -109,15 +124,16 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
                 if (value === 'pretty' || value === 'json') onFormatChange?.(value);
               }
             }}
+            disabled={!hasContent}
             className="bg-background/60 shadow-sm"
           >
-            <ToggleGroupItem value="decoded" aria-label="Decoded" disabled={!canDecode} title={canDecode ? 'Structured Lares4 payload view' : 'No decoded view for this entry'}>
+            <ToggleGroupItem value="decoded" aria-label="Decoded" disabled={!hasContent || !canDecode} title={canDecode ? 'Structured Lares4 payload view' : 'No decoded view for this entry'}>
               decoded
             </ToggleGroupItem>
-            <ToggleGroupItem value="pretty" aria-label="Pretty print">
+            <ToggleGroupItem value="pretty" aria-label="Pretty print" disabled={!hasContent}>
               pretty
             </ToggleGroupItem>
-            <ToggleGroupItem value="json" aria-label="JSON">
+            <ToggleGroupItem value="json" aria-label="JSON" disabled={!hasContent}>
               json
             </ToggleGroupItem>
           </ToggleGroup>
@@ -131,6 +147,7 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
                 onClick={() => setWrapLines((v) => !v)}
                 aria-label={wrapLines ? 'Disable word wrap' : 'Enable word wrap'}
                 aria-pressed={wrapLines}
+                disabled={!hasContent}
               >
                 <WrapText className="size-3.5" aria-hidden />
               </Button>
@@ -144,7 +161,7 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 shrink-0 p-0 text-muted-foreground"
-                disabled={!rendered}
+                disabled={!hasContent || !rendered}
                 onClick={copyContent}
                 aria-label="Copy content"
               >
@@ -159,35 +176,41 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
         <span className="sr-only" aria-live="polite">
           {selected ? `Selected ${selected.tag} log from ${formatLogClock(selected.ts)}.` : 'No log selected.'}
         </span>
-        {selected && effectiveMode === 'decoded' && decoded ? (
-          <ScrollArea className="min-h-0 flex-1">
-            <DecodedPanel decoded={decoded} />
-          </ScrollArea>
-        ) : rendered ? (
-          <ScrollArea className="min-h-0 flex-1">
-            <pre
-              ref={contentRef}
-              className={cn(
-                'text-foreground m-0 px-4 pb-4 font-mono text-[13px] leading-relaxed',
-                wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-auto',
-              )}
-            >
-              {rendered}
-            </pre>
-          </ScrollArea>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <div className="bg-muted/50 text-muted-foreground/50 flex size-9 items-center justify-center rounded-full">
-              <FileSearch className="size-4" aria-hidden />
-            </div>
-            <div className="space-y-1">
-              <p className="text-foreground/75 text-sm font-medium">Nothing selected</p>
-              <p className="text-muted-foreground max-w-[14rem] text-xs leading-relaxed">
-                Click a row in the log list to inspect its payload.
-              </p>
-            </div>
-          </div>
-        )}
+        <AnimatePresence mode="wait" initial={false}>
+          {selected && effectiveMode === 'decoded' && decoded ? (
+            <motion.div key={`decoded-${selectedId ?? 'none'}`} {...fade} className="flex min-h-0 flex-1 flex-col">
+              <ScrollArea className="min-h-0 flex-1">
+                <DecodedPanel decoded={decoded} />
+              </ScrollArea>
+            </motion.div>
+          ) : rendered ? (
+            <motion.div key={`text-${effectiveMode}-${selectedId ?? 'none'}`} {...fade} className="flex min-h-0 flex-1 flex-col">
+              <ScrollArea className="min-h-0 flex-1">
+                <pre
+                  ref={contentRef}
+                  className={cn(
+                    'text-foreground m-0 px-4 pb-4 font-mono text-detail leading-relaxed',
+                    wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-auto',
+                  )}
+                >
+                  {rendered}
+                </pre>
+              </ScrollArea>
+            </motion.div>
+          ) : (
+            <motion.div key="empty" {...fade} className="flex flex-1 flex-col">
+              <PaneEmpty
+                icon={FileSearch}
+                title={connected ? 'Nothing selected' : 'No data yet'}
+                description={
+                  connected
+                    ? 'Pick a row in the log list to inspect its payload, decoded fields, or raw JSON.'
+                    : 'Connect a panel from the sidebar, then pick a row to inspect.'
+                }
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </CardContent>
     </Card>
   );
@@ -204,7 +227,7 @@ function formatFieldValue(value: unknown): string {
 function resultChipClass(detail: string | undefined): string {
   if (!detail) return 'bg-muted text-muted-foreground ring-border/50';
   const upper = detail.toUpperCase();
-  if (upper === 'OK' || upper === '0X00' || upper === '0') {
+  if (upper === 'OK' || upper === '0X00' || upper === '0' || upper.endsWith('_OK')) {
     return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30';
   }
   if (upper.includes('TIMEOUT') || upper.includes('PENDING')) {
@@ -322,11 +345,11 @@ function FieldRow({
   return (
     <div
       className={cn(
-        'group grid grid-cols-[7rem_1fr_auto] items-start gap-x-3 gap-y-1 py-1.5',
+        'group grid grid-cols-[max-content_1fr_auto] items-start gap-x-4 gap-y-1 py-1.5',
         !isLast && 'border-b border-border/30',
       )}
     >
-      <div className="text-muted-foreground font-mono text-xs leading-relaxed" title={description}>{label}</div>
+      <div className="text-muted-foreground font-mono text-meta uppercase tracking-wider leading-[1.6]" title={description}>{label}</div>
       <div className="min-w-0">
         {multiline ? (
           <div className="flex flex-col gap-1">

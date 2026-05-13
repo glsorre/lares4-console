@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Radio, Terminal } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -11,7 +12,9 @@ import {
   connectionChipClasses,
   formatReplayLabel,
   replayChipClasses,
+  replayPhase,
 } from './runtime/status-chips.js';
+import { BASE } from './runtime/motion-presets.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { TabsStrip } from '@pro/tabs/ui/TabsStrip.js';
 
@@ -54,7 +57,11 @@ export function AppLayout() {
 
   const connClasses = connectionChipClasses(snapshot.connectionStatus);
   const replayClasses = replayChipClasses(snapshot.replayStatus);
-  const replayActive = snapshot.replayStatus && snapshot.replayStatus !== 'off';
+  const replayLoaded = replayPhase(snapshot.replayStatus) !== 'off';
+  const reduceMotion = useReducedMotion();
+  const enter = reduceMotion
+    ? { initial: false, animate: { opacity: 1, y: 0 }, transition: { duration: 0 } }
+    : { initial: { opacity: 0, y: -4 }, animate: { opacity: 1, y: 0 }, transition: BASE };
 
   const context: LayoutOutletContext = {
     sidebarOpen,
@@ -71,7 +78,10 @@ export function AppLayout() {
         Skip to main content
       </a>
 
-      <header className="border-border/80 from-card/40 to-background/40 flex shrink-0 items-center gap-3 border-b bg-gradient-to-b px-4 py-2.5 shadow-sm">
+      <motion.header
+        {...enter}
+        className="border-border/80 from-card/40 to-background/40 flex shrink-0 items-center gap-3 border-b bg-gradient-to-b px-4 py-2.5 shadow-sm"
+      >
         {/* Logo */}
         <div className="flex shrink-0 items-center gap-2.5">
           <div className="bg-primary/15 text-primary ring-primary/20 flex size-7 shrink-0 items-center justify-center rounded-lg ring-1">
@@ -96,12 +106,13 @@ export function AppLayout() {
           >
             <span className="truncate">{formatConnectionLabel(snapshot.connectionStatus)}</span>
           </button>
-          {replayActive ? (
+          {replayLoaded ? (
             <div
               className={cn(
                 'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
                 replayClasses,
               )}
+              aria-label={`Replay: ${formatReplayLabel(snapshot.replayStatus)}`}
             >
               <Radio className="size-3 shrink-0 opacity-70" aria-hidden />
               <span className="font-mono truncate">{formatReplayLabel(snapshot.replayStatus)}</span>
@@ -113,7 +124,7 @@ export function AppLayout() {
         <div className="flex shrink-0 items-center gap-1.5">
           <ThemeToggle />
         </div>
-      </header>
+      </motion.header>
 
       <TabsStrip />
 

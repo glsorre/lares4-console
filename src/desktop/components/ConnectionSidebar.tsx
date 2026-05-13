@@ -1,21 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Cable,
   Check,
-  ChevronDown,
-  ChevronRight,
-  Circle,
+  KeyRound,
   Loader2,
   MoreHorizontal,
-  Pause,
-  Play,
   Plus,
-  Square,
+  ShieldAlert,
+  Star,
   Trash2,
+  TriangleAlert,
   Unplug,
+  WifiOff,
 } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -39,12 +38,80 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import type { ConnectionProfile } from '../runtime/profiles-repository-desktop.js';
 import { useSessionController } from '@pro/tabs/context.js';
-import type { Macro } from '@pro/macros/types.js';
-import { MacroEditorDialog } from '@pro/macros/ui/MacroEditorDialog.js';
-import { isFeatureLicensed } from '../runtime/commercial-license-prefs.js';
-import { ProFeatureLock } from './ProFeatureLock.js';
 
 type View = 'list' | 'form';
+
+type ConnErrorKind = 'auth' | 'network' | 'tls' | 'validation' | 'generic';
+
+interface ClassifiedError {
+  kind: ConnErrorKind;
+  title: string;
+  message: string;
+  hint?: string;
+  Icon: typeof TriangleAlert;
+}
+
+function classifyConnectionError(raw: string): ClassifiedError {
+  const lower = raw.toLowerCase();
+  if (/pin|auth|unauthor|forbidden|denied/.test(lower)) {
+    return {
+      kind: 'auth',
+      title: 'Authentication failed',
+      message: raw,
+      hint: 'Verify the PIN on the panel keypad, then retry.',
+      Icon: KeyRound,
+    };
+  }
+  if (/tls|ssl|cert|self-?signed|handshake/.test(lower)) {
+    return {
+      kind: 'tls',
+      title: 'TLS / certificate issue',
+      message: raw,
+      hint: 'Toggle Secure WebSocket (WSS) or accept the panel’s self-signed cert.',
+      Icon: ShieldAlert,
+    };
+  }
+  if (/etimedout|econnrefused|enotfound|enetunreach|network|unreachable|timeout|socket|connection (closed|reset|aborted)/.test(lower)) {
+    return {
+      kind: 'network',
+      title: 'Panel unreachable',
+      message: raw,
+      hint: 'Check the IP, that the panel is online, and the network reaches it.',
+      Icon: WifiOff,
+    };
+  }
+  if (/required|invalid|empty|missing|format/.test(lower)) {
+    return {
+      kind: 'validation',
+      title: 'Invalid input',
+      message: raw,
+      Icon: TriangleAlert,
+    };
+  }
+  return {
+    kind: 'generic',
+    title: 'Connection error',
+    message: raw,
+    Icon: TriangleAlert,
+  };
+}
+
+function ErrorAlert({ raw }: { raw: string }) {
+  const err = classifyConnectionError(raw);
+  const Icon = err.Icon;
+  return (
+    <Alert variant="destructive" className="mb-3 py-2">
+      <Icon className="size-3.5" aria-hidden />
+      <AlertTitle className="text-xs font-semibold">{err.title}</AlertTitle>
+      <AlertDescription className="text-xs leading-snug">
+        <span className="break-words">{err.message}</span>
+        {err.hint && (
+          <span className="text-muted-foreground mt-1 block">{err.hint}</span>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
 
 export function ConnectionSidebar() {
   const { controller, snapshot } = useSessionController();
@@ -68,15 +135,6 @@ export function ConnectionSidebar() {
   const [saving, setSaving] = useState(false);
   const [defaultingName, setDefaultingName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const [macrosOpen, setMacrosOpen] = useState(true);
-  const [macroEditorOpen, setMacroEditorOpen] = useState(false);
-  const [editingMacro, setEditingMacro] = useState<Macro | undefined>(undefined);
-  const [deleteMacroId, setDeleteMacroId] = useState<string | null>(null);
-  const [recordingName, setRecordingName] = useState('');
-  const [recordingNameOpen, setRecordingNameOpen] = useState(false);
-  const [licenseTick, setLicenseTick] = useState(0);
-  const licensed = useMemo(() => isFeatureLicensed('macros'), [licenseTick]);
 
   const refreshProfiles = useCallback(async () => {
     const data = await controller.listProfiles();
@@ -231,11 +289,7 @@ export function ConnectionSidebar() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
-          {showError && (
-            <Alert variant="destructive" className="mb-3 py-2">
-              <AlertDescription className="text-xs">{showError}</AlertDescription>
-            </Alert>
-          )}
+          {showError && <ErrorAlert raw={showError} />}
 
           {profiles.length === 0 ? (
             <p className="text-muted-foreground text-xs leading-relaxed">
@@ -275,6 +329,12 @@ export function ConnectionSidebar() {
                       <div className="mb-2 flex items-start justify-between gap-1">
                         <div className="min-w-0 flex-1 space-y-0.5">
                           <div className="flex flex-wrap items-center gap-1">
+                            {p.name === persistedDefault && (
+                              <Star
+                                className="size-3 shrink-0 fill-current text-muted-foreground/70"
+                                aria-label="Default profile"
+                              />
+                            )}
                             <span className="text-foreground truncate text-xs font-semibold leading-tight">
                               {p.name}
                             </span>
@@ -282,9 +342,6 @@ export function ConnectionSidebar() {
                               <Badge className="h-3.5 bg-emerald-100 px-1 text-[0.55rem] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                                 Connected
                               </Badge>
-                            )}
-                            {p.name === persistedDefault && (
-                              <Badge variant="secondary" className="h-3.5 px-1 text-[0.55rem]">Default</Badge>
                             )}
                           </div>
                           <p className="text-muted-foreground font-mono text-[0.65rem]">{p.ip}</p>
@@ -355,99 +412,7 @@ export function ConnectionSidebar() {
             </ul>
           )}
 
-          {snapshot.connected && (
-            <MacrosSection
-              open={macrosOpen}
-              setOpen={setMacrosOpen}
-              macros={snapshot.macros}
-              activeMacro={snapshot.activeMacro}
-              recording={snapshot.recordingMacro}
-              recordingSteps={snapshot.recordingMacroSteps}
-              licensed={licensed}
-              onLicenseChanged={() => setLicenseTick((n) => n + 1)}
-              onNew={() => { setEditingMacro(undefined); setMacroEditorOpen(true); }}
-              onEdit={(m) => { setEditingMacro(m); setMacroEditorOpen(true); }}
-              onRun={(m) => controller.runMacro(m.id)}
-              onPause={() => controller.pauseMacro()}
-              onResume={() => controller.resumeMacro()}
-              onStop={() => controller.stopMacro()}
-              onDelete={(id) => setDeleteMacroId(id)}
-              onStartRecording={() => controller.startRecordingMacro()}
-              onStopRecording={() => {
-                setRecordingName('');
-                setRecordingNameOpen(true);
-              }}
-              onCancelRecording={() => controller.cancelRecordingMacro()}
-            />
-          )}
         </div>
-
-        <MacroEditorDialog
-          open={macroEditorOpen}
-          initial={editingMacro}
-          onOpenChange={setMacroEditorOpen}
-          onSave={async (input) => { await controller.saveMacro(input); }}
-        />
-
-        <Dialog open={recordingNameOpen} onOpenChange={(open) => { if (!open) setRecordingNameOpen(false); }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Save recorded macro</DialogTitle>
-              <DialogDescription>
-                Captured {snapshot.recordingMacroSteps} step{snapshot.recordingMacroSteps === 1 ? '' : 's'}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-1">
-              <Label htmlFor="rec-name" className="text-xs text-muted-foreground">Name</Label>
-              <Input
-                id="rec-name"
-                className="h-8 text-xs"
-                autoFocus
-                value={recordingName}
-                onChange={(e) => setRecordingName(e.target.value)}
-                placeholder="evening"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => { controller.cancelRecordingMacro(); setRecordingNameOpen(false); }}>
-                Discard
-              </Button>
-              <Button
-                type="button"
-                disabled={!recordingName.trim()}
-                onClick={() => {
-                  void controller.stopRecordingMacro(recordingName.trim());
-                  setRecordingNameOpen(false);
-                }}
-              >
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={deleteMacroId !== null} onOpenChange={(open) => { if (!open) setDeleteMacroId(null); }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Delete macro?</DialogTitle>
-              <DialogDescription>This cannot be undone.</DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDeleteMacroId(null)}>Cancel</Button>
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => {
-                  const id = deleteMacroId;
-                  setDeleteMacroId(null);
-                  if (id) void controller.removeMacro(id);
-                }}
-              >
-                Delete
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
           <DialogContent showCloseButton={!deleting}>
@@ -625,187 +590,3 @@ export function ConnectionSidebar() {
   );
 }
 
-interface MacrosSectionProps {
-  open: boolean;
-  setOpen: (v: boolean) => void;
-  macros: Macro[];
-  activeMacro?: { name: string; position: number; total: number; status: 'stopped' | 'playing' | 'paused' };
-  recording: boolean;
-  recordingSteps: number;
-  licensed: boolean;
-  onLicenseChanged: () => void;
-  onNew: () => void;
-  onEdit: (m: Macro) => void;
-  onRun: (m: Macro) => void;
-  onPause: () => void;
-  onResume: () => void;
-  onStop: () => void;
-  onDelete: (id: string) => void;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
-  onCancelRecording: () => void;
-}
-
-function MacrosSection(props: MacrosSectionProps) {
-  const {
-    open, setOpen, macros, activeMacro, recording, recordingSteps,
-    licensed, onLicenseChanged,
-    onNew, onEdit, onRun, onPause, onResume, onStop, onDelete,
-    onStartRecording, onStopRecording, onCancelRecording,
-  } = props;
-  if (!licensed) {
-    return (
-      <div className="mt-4 border-t border-border/60 pt-3">
-        <ProFeatureLock
-          featureId="macros"
-          label="Macros"
-          variant="row"
-          onLicenseChanged={onLicenseChanged}
-        />
-      </div>
-    );
-  }
-  return (
-    <div className="mt-4 border-t border-border/60 pt-3">
-      <button
-        type="button"
-        className="text-foreground flex w-full items-center justify-between gap-1 text-xs font-semibold"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        <span className="flex items-center gap-1">
-          {open ? <ChevronDown className="size-3" aria-hidden /> : <ChevronRight className="size-3" aria-hidden />}
-          Macros
-          <span className="text-muted-foreground font-normal">· {macros.length}</span>
-          <Badge
-            variant="secondary"
-            className="h-3.5 px-1 text-[0.55rem]"
-            title="Commercial license active"
-          >
-            Commercial
-          </Badge>
-        </span>
-        <span className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="size-6 p-0"
-            onClick={(e) => { e.stopPropagation(); onNew(); }}
-            aria-label="New macro"
-          >
-            <Plus className="size-3" aria-hidden />
-          </Button>
-        </span>
-      </button>
-
-      {open && (
-        <div className="mt-2 space-y-2">
-          {activeMacro && (
-            <div className="bg-muted/40 border-border/60 flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-[0.65rem]">
-              <span className="truncate font-mono">
-                {activeMacro.name} · {activeMacro.position}/{activeMacro.total} · {activeMacro.status}
-              </span>
-              <span className="flex items-center gap-0.5">
-                {activeMacro.status === 'playing' ? (
-                  <Button type="button" variant="ghost" size="sm" className="size-5 p-0" onClick={onPause} aria-label="Pause macro">
-                    <Pause className="size-3" aria-hidden />
-                  </Button>
-                ) : activeMacro.position < activeMacro.total ? (
-                  <Button type="button" variant="ghost" size="sm" className="size-5 p-0" onClick={onResume} aria-label="Resume macro">
-                    <Play className="size-3" aria-hidden />
-                  </Button>
-                ) : null}
-                <Button type="button" variant="ghost" size="sm" className="size-5 p-0" onClick={onStop} aria-label="Stop macro">
-                  <Square className="size-3" aria-hidden />
-                </Button>
-              </span>
-            </div>
-          )}
-
-          {recording && (
-            <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-[0.65rem]">
-              <span className="flex items-center gap-1.5">
-                <Circle className="size-2.5 fill-current" aria-hidden />
-                Recording · {recordingSteps} step{recordingSteps === 1 ? '' : 's'}
-              </span>
-              <span className="flex items-center gap-0.5">
-                <Button type="button" variant="ghost" size="sm" className="size-5 p-0" onClick={onStopRecording} aria-label="Stop recording">
-                  <Check className="size-3" aria-hidden />
-                </Button>
-                <Button type="button" variant="ghost" size="sm" className="size-5 p-0" onClick={onCancelRecording} aria-label="Cancel recording">
-                  <Trash2 className="size-3" aria-hidden />
-                </Button>
-              </span>
-            </div>
-          )}
-
-          {macros.length === 0 ? (
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              No macros. Use <strong className="text-foreground">+</strong> to create one.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {macros.map((m) => {
-                const isActive = activeMacro?.name === m.name;
-                return (
-                  <li key={m.id}>
-                    <div className={cn(
-                      'border-border/60 flex items-center gap-1 rounded-md border bg-card px-2 py-1.5 shadow-sm',
-                      isActive && 'border-primary/40 ring-1 ring-primary/20',
-                    )}>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-foreground truncate text-xs font-medium leading-tight">{m.name}</p>
-                        <p className="text-muted-foreground text-[0.6rem]">{m.steps.length} step{m.steps.length === 1 ? '' : 's'}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="size-6 p-0 text-muted-foreground hover:text-foreground"
-                        onClick={() => onRun(m)}
-                        disabled={isActive}
-                        aria-label={`Run ${m.name}`}
-                      >
-                        <Play className="size-3" aria-hidden />
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button type="button" variant="ghost" size="sm" className="size-6 p-0 opacity-50 hover:opacity-100" aria-label={`Options for ${m.name}`}>
-                            <MoreHorizontal className="size-3" aria-hidden />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="text-xs">
-                          <DropdownMenuItem onSelect={() => onEdit(m)}>Edit</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => onDelete(m.id)}>
-                            <Trash2 className="size-3" aria-hidden />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-
-          {!recording && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full gap-1.5 text-xs"
-              onClick={onStartRecording}
-              disabled={activeMacro !== undefined}
-            >
-              <Circle className="size-3" aria-hidden />
-              Record
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}

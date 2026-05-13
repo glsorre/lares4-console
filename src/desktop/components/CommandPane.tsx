@@ -69,11 +69,11 @@ export function CommandPane({
           <Input
             id="lares4-command-input"
             ref={inputRef}
-            className="min-h-10 flex-1 rounded-none border-0 bg-transparent font-mono text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+            className="min-h-10 flex-1 rounded-none border-0 bg-transparent font-mono text-sm shadow-none placeholder:text-muted-foreground/55 focus-visible:ring-0 dark:bg-transparent"
             value={command}
             autoComplete="off"
             spellCheck={false}
-            placeholder="state all"
+            placeholder="Type a command — try state all, lights on 1, or help"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={open}
@@ -136,7 +136,7 @@ export function CommandPane({
           <TooltipTrigger asChild>
             <Button
               type="button"
-              className="h-10 min-w-[5rem] shrink-0"
+              className="h-10 min-w-[5rem] shrink-0 transition-transform active:scale-[0.97]"
               disabled={!canRun}
               onClick={onSubmit}
             >
@@ -144,12 +144,17 @@ export function CommandPane({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <span className="font-mono text-[0.65rem]">Enter</span> run ·{' '}
-            <span className="font-mono text-[0.65rem]">Tab</span> complete ·{' '}
-            <span className="font-mono text-[0.65rem]">↑↓</span> history
+            <span className="font-mono text-meta">Enter</span> run ·{' '}
+            <span className="font-mono text-meta">Tab</span> complete ·{' '}
+            <span className="font-mono text-meta">↑↓</span> history
           </TooltipContent>
         </Tooltip>
       </div>
+      {!command && !open && (
+        <p className="text-muted-foreground/70 mt-1.5 px-1 text-meta">
+          <span className="font-mono">Tab</span> autocomplete · <span className="font-mono">↑↓</span> history · <span className="font-mono">Enter</span> run
+        </p>
+      )}
       {open && (
         <div
           role="listbox"

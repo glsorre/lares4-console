@@ -150,5 +150,6 @@ export function buildTopology(input: BuildTopologyInput | undefined | null): Top
     groups.push({ kind, label: GROUP_LABELS[kind], count: nodes.length, nodes });
     total += nodes.length;
   }
+  groups.sort((a, b) => a.label.localeCompare(b.label));
   return { groups, total };
 }

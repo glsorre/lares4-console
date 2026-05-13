@@ -58,9 +58,8 @@ export function summarizeForPreview(tag: LogTag, payload: unknown, fallback: str
   if (tag === 'RAW_RX' || tag === 'RAW_TX') {
     const cmd = typeof obj.CMD === 'string' ? obj.CMD : undefined;
     const ptype = typeof obj.PAYLOAD_TYPE === 'string' ? obj.PAYLOAD_TYPE : undefined;
-    const arrow = tag === 'RAW_TX' ? '→' : '←';
-    if (cmd && ptype) return `${arrow} ${cmd}/${ptype}`;
-    if (cmd) return `${arrow} ${cmd}`;
+    if (cmd && ptype) return `${cmd}/${ptype}`;
+    if (cmd) return cmd;
     return fallback;
   }
   if (tag === 'ACK') {

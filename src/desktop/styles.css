@@ -61,9 +61,23 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+
+    /* Typography scale — diagnostic console baseline rhythm */
+    --text-meta: 0.6875rem;
+    --text-meta--line-height: 1.2;
+    --text-row: 0.8125rem;
+    --text-row--line-height: 1.4;
+    --text-detail: 0.875rem;
+    --text-detail--line-height: 1.5;
 }
 
 :root {
+    /* Motion timings (CSS custom properties, used by components + Motion library) */
+    --motion-fast: 120ms;
+    --motion-base: 220ms;
+    --motion-deliberate: 360ms;
+    --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
     /* Warm neutral lab surfaces */
     --background: oklch(0.985 0.004 85);
     --foreground: oklch(0.19 0.02 260);
@@ -116,6 +130,11 @@
     --replay-active-fg: oklch(0.38 0.12 280);
 
     --pane: oklch(0.99 0.003 85);
+
+    /* Selected row tokens — saturated enough to scan at speed */
+    --row-selected-bg: color-mix(in oklch, var(--accent) 55%, var(--card));
+    --row-selected-ring: var(--primary);
+    --row-selected-bar: var(--primary);
 }
 
 .dark {
@@ -166,6 +185,10 @@
     --replay-active-fg: oklch(0.88 0.1 280);
 
     --pane: oklch(0.17 0.02 260);
+
+    --row-selected-bg: color-mix(in oklch, var(--accent) 70%, var(--card));
+    --row-selected-ring: var(--primary);
+    --row-selected-bar: var(--primary);
 }
 
 @layer base {
