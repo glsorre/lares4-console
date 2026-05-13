@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { Bookmark as BookmarkIcon, FileSearch } from 'lucide-react';
@@ -10,7 +10,7 @@ import { CommercialLicenseDialog } from '../components/CommercialLicenseDialog.j
 import { ConnectionSidebar } from '../components/ConnectionSidebar.js';
 import { ConsoleTopBar } from '../components/ConsoleTopBar.js';
 import { LogDetailPane } from '../components/LogDetailPane.js';
-import { LogsListPane, type LogSourceFilter } from '../components/LogsListPane.js';
+import { LogsListPane } from '../components/LogsListPane.js';
 import { TopologyPane } from '../components/TopologyPane.js';
 import { TriggersDialog } from '@pro/triggers/ui/TriggersDialog.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
@@ -20,14 +20,27 @@ import type { LayoutOutletContext } from '../AppLayout.js';
 type DetailTab = 'detail' | 'bookmarks';
 
 const TOPOLOGY_RAIL_KEY = 'lares4.topologyRailOpen';
-const LOG_SOURCE_FILTER_KEY = 'lares4.logSourceFilter';
+const LEGACY_LOG_SOURCE_FILTER_KEY = 'lares4.logSourceFilter';
 
-function readLogSourceFilter(): LogSourceFilter {
+function isLogSource(value: unknown): value is 'command' | 'lifecycle' | 'wire' {
+  return value === 'command' || value === 'lifecycle' || value === 'wire';
+}
+
+function consumeLegacySourceTokens(): string[] {
   try {
-    const raw = window.localStorage.getItem(LOG_SOURCE_FILTER_KEY);
-    if (raw === 'command' || raw === 'lifecycle' || raw === 'wire' || raw === 'all') return raw;
-  } catch { /* ignore */ }
-  return 'all';
+    const raw = window.localStorage.getItem(LEGACY_LOG_SOURCE_FILTER_KEY);
+    if (!raw) return [];
+    window.localStorage.removeItem(LEGACY_LOG_SOURCE_FILTER_KEY);
+    if (raw === 'all') return [];
+    if (isLogSource(raw)) return [`source:${raw}`];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const valid = parsed.filter(isLogSource);
+    if (valid.length === 0 || valid.length === 3) return [];
+    return valid.map((s) => `source:${s}`);
+  } catch {
+    return [];
+  }
 }
 
 export function ConsolePage() {
@@ -44,11 +57,25 @@ export function ConsolePage() {
   const [topologyRailOpen, setTopologyRailOpen] = useState<boolean>(readRailOpen);
   const [railSheetOpen, setRailSheetOpen] = useState(false);
   const [searchPulseKey, setSearchPulseKey] = useState(0);
-  const [sourceFilter, setSourceFilter] = useState<LogSourceFilter>(readLogSourceFilter);
 
+  const migratedProfilesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    try { window.localStorage.setItem(LOG_SOURCE_FILTER_KEY, sourceFilter); } catch { /* ignore */ }
-  }, [sourceFilter]);
+    const name = snapshot.activeProfileName ?? '';
+    if (migratedProfilesRef.current.has(name)) return;
+    migratedProfilesRef.current.add(name);
+    const tokens: string[] = [];
+    tokens.push(...consumeLegacySourceTokens());
+    if (snapshot.logTagFilters !== undefined && snapshot.logTagFilters.length > 0) {
+      tokens.push(...snapshot.logTagFilters.map((t) => `tag:${t}`));
+      controller.setLogTagFilters(undefined);
+    }
+    if (tokens.length === 0) return;
+    setSearchInput((prev) => {
+      const prefix = tokens.join(' ');
+      return prev.length === 0 ? prefix : `${prefix} ${prev}`;
+    });
+    setSearchPulseKey((n) => n + 1);
+  }, [snapshot.activeProfileName, snapshot.logTagFilters, controller]);
 
   const annotationsLicensed = snapshot.licensed.annotations;
   const triggersLicensed = snapshot.licensed.triggers;
@@ -187,13 +214,6 @@ export function ConsolePage() {
         entries={snapshot.logEntries}
         selectedId={selectedId}
         onSelect={setSelectedId}
-        tagFilters={snapshot.logTagFilters}
-        onTagFiltersChange={(next) => controller.setLogTagFilters(next)}
-        sourceFilter={sourceFilter}
-        onSourceFilterChange={(next) => {
-          setSourceFilter(next);
-          if (snapshot.logTagFilters !== undefined) controller.setLogTagFilters(undefined);
-        }}
         searchInput={searchInput}
         bookmarkedIds={bookmarkedIds}
         onToggleBookmark={(id) => controller.toggleBookmark(id)}

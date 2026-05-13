@@ -1,4 +1,5 @@
-import type { LogEntry, LogLevel, LogTag } from './types.js';
+import { entrySource } from './types.js';
+import type { LogEntry, LogLevel, LogSource, LogTag } from './types.js';
 
 export interface LogPredicate {
   (entry: LogEntry): boolean;
@@ -11,8 +12,12 @@ export interface CompiledQuery {
   error?: string;
 }
 
-const TAG_VALUES: ReadonlySet<string> = new Set(['ACK', 'RAW_RX', 'RAW_TX', 'BULK', 'CHANGE', 'ERROR', 'LOG', 'SYSTEM']);
-const LEVEL_VALUES: ReadonlySet<string> = new Set(['info', 'warn', 'error', 'debug']);
+export const TAG_VALUES: readonly LogTag[] = ['ACK', 'RAW_RX', 'RAW_TX', 'BULK', 'CHANGE', 'ERROR', 'LOG', 'SYSTEM'];
+const TAG_SET: ReadonlySet<string> = new Set(TAG_VALUES);
+export const LEVEL_VALUES: readonly LogLevel[] = ['info', 'warn', 'error', 'debug'];
+const LEVEL_SET: ReadonlySet<string> = new Set(LEVEL_VALUES);
+export const SOURCE_VALUES: readonly LogSource[] = ['command', 'lifecycle', 'wire'];
+const SOURCE_SET: ReadonlySet<string> = new Set(SOURCE_VALUES);
 
 function tokenize(input: string): string[] {
   const out: string[] = [];
@@ -190,13 +195,19 @@ function compileToken(token: string): TokenPredicate | { error: string } {
     const value = stripQuotes(token.slice(colonIdx + 1));
     if (key === 'tag') {
       const upper = value.toUpperCase();
-      if (!TAG_VALUES.has(upper)) return { error: `Unknown tag: ${value}` };
+      if (!TAG_SET.has(upper)) return { error: `Unknown tag: ${value}` };
       return { predicate: (entry) => entry.tag === (upper as LogTag) };
     }
     if (key === 'level') {
       const lower = value.toLowerCase();
-      if (!LEVEL_VALUES.has(lower)) return { error: `Unknown level: ${value}` };
+      if (!LEVEL_SET.has(lower)) return { error: `Unknown level: ${value}` };
       return { predicate: (entry) => entry.level === (lower as LogLevel) };
+    }
+    if (key === 'source') {
+      const lower = value.toLowerCase();
+      if (!SOURCE_SET.has(lower)) return { error: `Unknown source: ${value}` };
+      const src = lower as LogSource;
+      return { predicate: (entry) => entrySource(entry) === src };
     }
     if (key === 'id') {
       return {
@@ -266,4 +277,125 @@ export function applyLogQuery(entries: LogEntry[], input: string): LogEntry[] {
   const q = compileLogQuery(input);
   if (q.isEmpty) return entries;
   return entries.filter(q.predicate);
+}
+
+export type ChipKind = 'tag' | 'source' | 'level' | 'id' | 'cmd';
+
+export interface ChipToken {
+  kind: ChipKind;
+  value: string;
+  raw: string;
+}
+
+const CHIP_KEYS: ReadonlySet<string> = new Set(['tag', 'source', 'level', 'id', 'cmd']);
+
+function classifyToken(token: string): ChipToken | undefined {
+  const colon = token.indexOf(':');
+  if (colon <= 0) return undefined;
+  const key = token.slice(0, colon).toLowerCase();
+  if (!CHIP_KEYS.has(key)) return undefined;
+  const value = stripQuotes(token.slice(colon + 1));
+  if (!value) return undefined;
+  switch (key) {
+    case 'tag': {
+      const u = value.toUpperCase();
+      if (!TAG_SET.has(u)) return undefined;
+      return { kind: 'tag', value: u, raw: `tag:${u}` };
+    }
+    case 'source': {
+      const l = value.toLowerCase();
+      if (!SOURCE_SET.has(l)) return undefined;
+      return { kind: 'source', value: l, raw: `source:${l}` };
+    }
+    case 'level': {
+      const l = value.toLowerCase();
+      if (!LEVEL_SET.has(l)) return undefined;
+      return { kind: 'level', value: l, raw: `level:${l}` };
+    }
+    case 'id':  return { kind: 'id',  value, raw: `id:${value}` };
+    case 'cmd': return { kind: 'cmd', value, raw: `cmd:${value}` };
+    default:    return undefined;
+  }
+}
+
+export interface SplitQuery {
+  chips: ChipToken[];
+  trailing: string;
+}
+
+export function splitQuery(input: string): SplitQuery {
+  const tokens = tokenize(input);
+  const chips: ChipToken[] = [];
+  const rest: string[] = [];
+  const seen = new Set<string>();
+  for (const tok of tokens) {
+    const chip = classifyToken(tok);
+    if (chip && !seen.has(chip.raw)) {
+      seen.add(chip.raw);
+      chips.push(chip);
+    } else if (!chip) {
+      rest.push(tok);
+    }
+  }
+  return { chips, trailing: rest.join(' ') };
+}
+
+export function joinQuery(parts: SplitQuery): string {
+  const head = parts.chips.map((c) => c.raw).join(' ');
+  const tail = parts.trailing;
+  if (head && tail) return `${head} ${tail}`;
+  return head || tail;
+}
+
+export function addChip(input: string, chip: ChipToken): string {
+  const split = splitQuery(input);
+  if (split.chips.some((c) => c.raw === chip.raw)) return joinQuery(split);
+  return joinQuery({ chips: [...split.chips, chip], trailing: split.trailing });
+}
+
+export function removeChipFromInput(input: string, raw: string): string {
+  const split = splitQuery(input);
+  return joinQuery({ chips: split.chips.filter((c) => c.raw !== raw), trailing: split.trailing });
+}
+
+export interface CompiledChipFilters {
+  predicate: LogPredicate;
+  isEmpty: boolean;
+  error?: string;
+}
+
+export function compileChipFilters(input: string): CompiledChipFilters {
+  const split = splitQuery(input);
+  if (split.chips.length === 0) {
+    return { predicate: () => true, isEmpty: true };
+  }
+  const predicates: LogPredicate[] = [];
+  let error: string | undefined;
+  for (const chip of split.chips) {
+    const compiled = compileToken(chip.raw);
+    if ('error' in compiled) { error = compiled.error; continue; }
+    predicates.push(compiled.predicate);
+  }
+  return {
+    predicate: (entry) => predicates.every((p) => p(entry)),
+    isEmpty: predicates.length === 0,
+    error,
+  };
+}
+
+export function extractFreeTextTerms(input: string): string[] {
+  const split = splitQuery(input);
+  if (!split.trailing) return [];
+  const tokens = tokenize(split.trailing);
+  const out: string[] = [];
+  for (const tok of tokens) {
+    const colon = tok.indexOf(':');
+    if (colon > 0) {
+      const key = tok.slice(0, colon).toLowerCase();
+      if (CHIP_KEYS.has(key)) continue;
+    }
+    const term = stripQuotes(tok).toLowerCase();
+    if (term) out.push(term);
+  }
+  return out;
 }

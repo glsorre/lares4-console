@@ -1,57 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType, SVGProps } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import {
   Activity,
   AlertTriangle,
   ArrowDownLeft,
   ArrowDownToLine,
   ArrowUpRight,
-  ChevronDown,
   CornerDownLeft,
   Info,
   Layers,
-  Pause,
   Pin,
   Star,
   Terminal,
 } from 'lucide-react';
 import { ProFeatureLock } from './ProFeatureLock';
 import { buildMessageListItems, formatLogClock } from '../../core/log-view.js';
-import { compileLogQuery } from '../../core/log-query.js';
-import { entrySource } from '../../core/types.js';
-import type { LogEntry, LogSource, LogTag } from '../../core/types.js';
+import { compileChipFilters, extractFreeTextTerms } from '../../core/log-query.js';
+import type { LogEntry, LogTag } from '../../core/types.js';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { getTagClasses, getTagDotClass } from '../runtime/log-tag-classes.js';
+import { getTagClasses } from '../runtime/log-tag-classes.js';
 
-const ALL_TAGS: LogTag[] = ['ACK', 'CHANGE', 'BULK', 'RAW_RX', 'LOG', 'RAW_TX', 'ERROR', 'SYSTEM'];
 const TAIL_THRESHOLD_PX = 24;
-
-export type LogSourceFilter = 'all' | LogSource;
-const SOURCE_FILTERS: ReadonlyArray<{ value: LogSourceFilter; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'command', label: 'Commands' },
-  { value: 'lifecycle', label: 'Lifecycle' },
-  { value: 'wire', label: 'Wire' },
-];
-const SOURCE_LABEL: Record<LogSourceFilter, string> = {
-  all: 'All sources',
-  command: 'Commands',
-  lifecycle: 'Lifecycle',
-  wire: 'Wire',
-};
 
 type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -73,10 +46,6 @@ interface LogsListPaneProps {
   entries: LogEntry[];
   selectedId?: string;
   onSelect: (id: string) => void;
-  tagFilters: LogTag[] | undefined;
-  onTagFiltersChange: (next: LogTag[] | undefined) => void;
-  sourceFilter: LogSourceFilter;
-  onSourceFilterChange: (next: LogSourceFilter) => void;
   searchInput: string;
   bookmarkedIds: ReadonlySet<string>;
   onToggleBookmark: (id: string) => void;
@@ -89,10 +58,6 @@ export function LogsListPane({
   entries,
   selectedId,
   onSelect,
-  tagFilters,
-  onTagFiltersChange,
-  sourceFilter,
-  onSourceFilterChange,
   searchInput,
   bookmarkedIds,
   onToggleBookmark,
@@ -101,65 +66,26 @@ export function LogsListPane({
   annotationsLicensed,
 }: LogsListPaneProps) {
   const [followTail, setFollowTail] = useState<boolean>(true);
-  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
 
-  const sourceCounts = useMemo(() => {
-    const map: Record<LogSource, number> = { command: 0, lifecycle: 0, wire: 0 };
-    for (const entry of entries) map[entrySource(entry)] += 1;
-    return map;
-  }, [entries]);
-
-  const sourceFilteredEntries = useMemo(() => {
-    if (sourceFilter === 'all') return entries;
-    return entries.filter((entry) => entrySource(entry) === sourceFilter);
-  }, [entries, sourceFilter]);
-
-  const tagCounts = useMemo(() => {
-    const map = new Map<LogTag, number>();
-    for (const entry of sourceFilteredEntries) map.set(entry.tag, (map.get(entry.tag) ?? 0) + 1);
-    return map;
-  }, [sourceFilteredEntries]);
-
-  const compiledQuery = useMemo(() => compileLogQuery(searchInput), [searchInput]);
+  const chipFilters = useMemo(() => compileChipFilters(searchInput), [searchInput]);
+  const searchTerms = useMemo(() => extractFreeTextTerms(searchInput), [searchInput]);
 
   const filteredEntries = useMemo(() => {
-    if (compiledQuery.isEmpty) return sourceFilteredEntries;
-    return sourceFilteredEntries.filter((entry) => compiledQuery.predicate(entry));
-  }, [sourceFilteredEntries, compiledQuery]);
+    if (chipFilters.isEmpty) return entries;
+    return entries.filter((entry) => chipFilters.predicate(entry));
+  }, [entries, chipFilters]);
 
-  const allItems = useMemo(() => buildMessageListItems(filteredEntries), [filteredEntries]);
+  const items = useMemo(() => buildMessageListItems(filteredEntries), [filteredEntries]);
+  const matchByItemId = useMemo(() => {
+    if (searchTerms.length === 0) return undefined;
+    const map = new Map<string, boolean>();
+    for (const it of items) {
+      const haystack = `${it.preview}\n${JSON.stringify(it.payload ?? '')}`.toLowerCase();
+      map.set(it.id, searchTerms.some((t) => haystack.includes(t)));
+    }
+    return map;
+  }, [items, searchTerms]);
 
-  const items = useMemo(() => {
-    if (tagFilters === undefined) return allItems;
-    return allItems.filter((it) => tagFilters.includes(it.tag) || it.id === selectedId);
-  }, [allItems, tagFilters, selectedId]);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') {
-        event.preventDefault();
-        setTagPopoverOpen((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  const activeTagSet = useMemo<Set<LogTag>>(
-    () => new Set(tagFilters ?? ALL_TAGS),
-    [tagFilters],
-  );
-  const activeTagCount = activeTagSet.size;
-
-  const setTagActive = useCallback((tag: LogTag, active: boolean) => {
-    const current = new Set<LogTag>(activeTagSet);
-    if (active) current.add(tag);
-    else current.delete(tag);
-    if (current.size === ALL_TAGS.length) onTagFiltersChange(undefined);
-    else onTagFiltersChange(ALL_TAGS.filter((t) => current.has(t)));
-  }, [activeTagSet, onTagFiltersChange]);
-
-  const searchActive = !compiledQuery.isEmpty;
   const pinnedItem = useMemo(() => {
     if (!pinnedId) return undefined;
     return buildMessageListItems(entries).find((it) => it.id === pinnedId);
@@ -222,160 +148,6 @@ export function LogsListPane({
 
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
-      <div className="border-border/60 flex shrink-0 flex-col gap-1.5 border-b px-3 py-1.5">
-      <div className="flex min-h-[34px] flex-wrap items-center gap-2">
-      <ToggleGroup
-        type="single"
-        spacing={0}
-        variant="outline"
-        size="sm"
-        value={sourceFilter}
-        onValueChange={(value) => {
-          if (value === 'all' || value === 'command' || value === 'lifecycle' || value === 'wire') {
-            onSourceFilterChange(value);
-          }
-        }}
-        className="mr-auto bg-transparent shadow-none"
-        aria-label="Filter by message source"
-      >
-        {SOURCE_FILTERS.map((opt) => {
-          const count = opt.value === 'all'
-            ? entries.length
-            : sourceCounts[opt.value];
-          return (
-            <ToggleGroupItem
-              key={opt.value}
-              value={opt.value}
-              aria-label={opt.label}
-              className={cn(
-                'gap-1.5 px-2 text-xs text-muted-foreground',
-                'data-[state=on]:bg-[oklch(var(--accent)/0.12)]',
-                'data-[state=on]:text-foreground',
-                'data-[state=on]:ring-1 data-[state=on]:ring-[oklch(var(--accent)/0.45)]',
-              )}
-            >
-              {opt.label}
-              <span
-                className={cn(
-                  'rounded px-1 font-mono text-[0.6rem] tabular-nums',
-                  'bg-muted text-muted-foreground',
-                  'group-data-[state=on]:bg-[oklch(var(--accent)/0.20)]',
-                  'group-data-[state=on]:text-foreground',
-                )}
-              >
-                {count}
-              </span>
-            </ToggleGroupItem>
-          );
-        })}
-      </ToggleGroup>
-        <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs font-medium"
-                  aria-label="Filter by tag"
-                  aria-keyshortcuts="Meta+T Control+T"
-                >
-                  <span className="text-muted-foreground">Tags</span>
-                  <span className="font-mono tabular-nums">
-                    {activeTagCount}/{ALL_TAGS.length}
-                  </span>
-                  <span className="flex items-center gap-0.5" aria-hidden>
-                    {ALL_TAGS.filter((t) => activeTagSet.has(t)).slice(0, 4).map((t) => (
-                      <span key={t} className={cn('size-1.5 rounded-full', getTagDotClass(t))} />
-                    ))}
-                  </span>
-                  <ChevronDown className="size-3.5 opacity-60" aria-hidden />
-                </Button>
-              </PopoverTrigger>
-            </TooltipTrigger>
-            <TooltipContent>Filter tags (⌘T)</TooltipContent>
-          </Tooltip>
-          <PopoverContent align="end" className="w-64 p-0">
-            <Command>
-              <CommandInput placeholder="Filter tags…" />
-              <div className="flex flex-col gap-1 border-b border-border/40 px-2 py-1.5">
-                <span className="text-foreground text-xs font-medium">
-                  Tags <span className="text-muted-foreground">·</span>{' '}
-                  <span className="text-muted-foreground">{SOURCE_LABEL[sourceFilter]}</span>
-                </span>
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">
-                    {activeTagCount} of {ALL_TAGS.length} on
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-xs"
-                      onClick={() => onTagFiltersChange(undefined)}
-                    >
-                      All
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-xs"
-                      onClick={() => onTagFiltersChange([])}
-                    >
-                      None
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <CommandList>
-                <CommandEmpty>No tag matches.</CommandEmpty>
-                {ALL_TAGS.map((tag) => {
-                  const active = activeTagSet.has(tag);
-                  const count = tagCounts.get(tag) ?? 0;
-                  return (
-                    <CommandItem
-                      key={tag}
-                      value={tag}
-                      data-checked={active}
-                      onSelect={() => setTagActive(tag, !active)}
-                      className="font-mono text-xs"
-                    >
-                      <span className={cn('size-2 shrink-0 rounded-full', getTagDotClass(tag))} aria-hidden />
-                      <span className={cn('flex-1', !active && 'text-muted-foreground')}>{tag}</span>
-                      <span className="text-muted-foreground tabular-nums">{count}</span>
-                    </CommandItem>
-                  );
-                })}
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'h-7 w-7 shrink-0 p-0 text-muted-foreground',
-                followTail && 'text-foreground',
-              )}
-              onClick={() => setFollowTail(!followTail)}
-              aria-label={followTail ? 'Pause auto-scroll' : 'Follow tail'}
-              aria-pressed={followTail}
-            >
-              {followTail
-                ? <ArrowDownToLine className="size-3.5" aria-hidden />
-                : <Pause className="size-3.5" aria-hidden />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{followTail ? 'Pause auto-scroll' : 'Follow tail'}</TooltipContent>
-        </Tooltip>
-      </div>
-      </div>
       <CardContent className="relative flex min-h-0 flex-1 flex-col px-0 pb-0">
         {items.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -386,14 +158,12 @@ export function LogsListPane({
               <p className="text-foreground/75 text-sm font-medium">
                 {entries.length === 0
                   ? 'No messages yet'
-                  : searchActive ? 'No messages match search' : 'No messages match filters'}
+                  : 'No messages match search'}
               </p>
               <p className="text-muted-foreground max-w-[16rem] text-xs leading-relaxed">
                 {entries.length === 0
                   ? 'Run a command to see responses and events.'
-                  : searchActive
-                    ? 'Refine your query or clear it to see all matching messages.'
-                    : 'Toggle a tag chip above to show those messages.'}
+                  : 'Refine the query (source:, tag:, level:, id:, cmd:) or clear it.'}
               </p>
             </div>
           </div>
@@ -445,35 +215,34 @@ export function LogsListPane({
                     selected={pinnedItem.id === selectedId}
                     bookmarked={bookmarkedIds.has(pinnedItem.id)}
                     pinned
-                    stickyHidden={false}
                     rowIdPrefix="pinned-log-row"
                     meta={metaByGroupId.get(pinnedItem.id)}
                     annotationsLicensed={annotationsLicensed}
+                    searchTerms={searchTerms}
+                    searchMatch={matchByItemId?.get(pinnedItem.id)}
                     onSelect={onSelect}
                     onToggleBookmark={onToggleBookmark}
                     onTogglePin={() => onPinnedIdChange(undefined)}
                   />
                 </div>
               )}
-              {items.map((item) => {
-                const stickyHidden = tagFilters !== undefined && !tagFilters.includes(item.tag);
-                return (
-                  <Row
-                    key={item.id}
-                    item={item}
-                    selected={item.id === selectedId}
-                    bookmarked={bookmarkedIds.has(item.id)}
-                    pinned={item.id === pinnedId}
-                    stickyHidden={stickyHidden}
-                    rowIdPrefix="log-row"
-                    meta={metaByGroupId.get(item.id)}
-                    annotationsLicensed={annotationsLicensed}
-                    onSelect={onSelect}
-                    onToggleBookmark={onToggleBookmark}
-                    onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
-                  />
-                );
-              })}
+              {items.map((item) => (
+                <Row
+                  key={item.id}
+                  item={item}
+                  selected={item.id === selectedId}
+                  bookmarked={bookmarkedIds.has(item.id)}
+                  pinned={item.id === pinnedId}
+                  rowIdPrefix="log-row"
+                  meta={metaByGroupId.get(item.id)}
+                  annotationsLicensed={annotationsLicensed}
+                  searchTerms={searchTerms}
+                  searchMatch={matchByItemId?.get(item.id)}
+                  onSelect={onSelect}
+                  onToggleBookmark={onToggleBookmark}
+                  onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
+                />
+              ))}
             </div>
           </ScrollArea>
         )}
@@ -501,13 +270,38 @@ interface RowProps {
   selected: boolean;
   bookmarked: boolean;
   pinned: boolean;
-  stickyHidden: boolean;
   rowIdPrefix: string;
   meta?: { latencyMs?: number; highlight?: LogEntry['highlight'] };
   annotationsLicensed: boolean;
+  searchTerms: string[];
+  searchMatch?: boolean;
   onSelect: (id: string) => void;
   onToggleBookmark: (id: string) => void;
   onTogglePin: () => void;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightFragment(text: string, terms: string[]): ReactNode {
+  if (terms.length === 0) return text;
+  const pattern = new RegExp(`(${terms.map(escapeRegex).join('|')})`, 'gi');
+  const parts = text.split(pattern);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => {
+    if (i % 2 === 1) {
+      return (
+        <mark
+          key={i}
+          className="rounded bg-[oklch(var(--accent)/0.35)] text-foreground px-0.5"
+        >
+          {part}
+        </mark>
+      );
+    }
+    return part;
+  });
 }
 
 const HIGHLIGHT_BG: Record<NonNullable<LogEntry['highlight']>, string> = {
@@ -519,26 +313,31 @@ const HIGHLIGHT_BG: Record<NonNullable<LogEntry['highlight']>, string> = {
 };
 
 function Row({
-  item, selected, bookmarked, pinned, stickyHidden, rowIdPrefix, meta,
+  item, selected, bookmarked, pinned, rowIdPrefix, meta,
   annotationsLicensed,
+  searchTerms, searchMatch,
   onSelect, onToggleBookmark, onTogglePin,
 }: RowProps) {
   const isError = item.tag === 'ERROR';
   const Icon = getTagIcon(item.tag);
   const highlightCls = meta?.highlight ? HIGHLIGHT_BG[meta.highlight] : undefined;
+  const hasSearch = searchTerms.length > 0;
+  const isMatch = hasSearch && searchMatch === true;
+  const isDimmed = hasSearch && searchMatch === false;
   return (
     <div
       id={`${rowIdPrefix}-${item.id}`}
       role="option"
       aria-selected={selected}
       className={cn(
-        'hover:bg-muted/80 border-border/40 group grid w-full cursor-pointer items-center gap-x-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors',
+        'hover:bg-muted/80 border-border/40 group grid w-full cursor-pointer items-center gap-x-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-[opacity,background-color,box-shadow]',
         'grid-cols-[1rem_5rem_3.5rem_1fr_auto]',
         isError && !selected && 'bg-red-50/60 dark:bg-red-950/30',
         highlightCls && !selected && highlightCls,
         selected && 'border-primary/35 bg-accent/35 shadow-sm ring-1 ring-primary/20',
         pinned && 'border-primary/50 ring-1 ring-primary/30',
-        stickyHidden && 'italic opacity-60',
+        isMatch && !selected && 'ring-1 ring-[oklch(var(--accent)/0.55)] bg-[oklch(var(--accent)/0.06)]',
+        isDimmed && 'opacity-45',
       )}
       onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => {
@@ -559,7 +358,7 @@ function Row({
         {formatLogClock(item.ts)}
       </span>
       <span className="min-w-0 truncate text-sm leading-snug">
-        {item.preview}
+        {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
         {item.repeat !== undefined && item.repeat > 1 && (
           <span className="text-muted-foreground ml-1.5 font-mono text-[0.7rem] tabular-nums">×{item.repeat}</span>
         )}
@@ -636,3 +435,4 @@ function Row({
     </div>
   );
 }
+
