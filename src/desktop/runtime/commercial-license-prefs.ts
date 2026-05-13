@@ -1,6 +1,6 @@
 const LEGACY_STORAGE_KEY = 'lares4.commercialLicense';
 
-export type FeatureId = 'macros' | 'tabs';
+export type FeatureId = 'macros' | 'tabs' | 'triggers' | 'annotations';
 
 export interface FeatureDescriptor {
   id: FeatureId;
@@ -23,6 +23,20 @@ export const FEATURES: Record<FeatureId, FeatureDescriptor> = {
     title: 'Tabs commercial license',
     description:
       'Multi-connection tabs are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — enter your key below to unlock additional tabs.',
+  },
+  triggers: {
+    id: 'triggers',
+    storageKey: 'lares4.license.triggers',
+    title: 'Triggers commercial license',
+    description:
+      'Trigger rules are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — enter your key below to enable rule editing and live evaluation.',
+  },
+  annotations: {
+    id: 'annotations',
+    storageKey: 'lares4.license.annotations',
+    title: 'Pin & bookmarks commercial license',
+    description:
+      'Pin and bookmarks are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — enter your key below to enable pinning, bookmarking, notes, and export.',
   },
 };
 

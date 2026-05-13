@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
+use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
+use tauri::Emitter;
+
 fn app_config_dir() -> Result<PathBuf, String> {
     let base =
         dirs::config_dir().ok_or_else(|| String::from("Unable to resolve config directory"))?;
@@ -64,9 +67,13 @@ fn resolve_default_session_path(prefix: String, ext: String) -> Result<String, S
         .into_owned())
 }
 
+const ABOUT_MENU_ID: &str = "about";
+const ABOUT_EVENT: &str = "menu://about";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             read_profiles_file,
             write_profiles_file,
@@ -82,6 +89,64 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            let about_item = MenuItem::with_id(
+                app,
+                ABOUT_MENU_ID,
+                "About Lares4 Console",
+                true,
+                None::<&str>,
+            )?;
+
+            #[cfg(target_os = "macos")]
+            let menu = {
+                let app_submenu = SubmenuBuilder::new(app, "Lares4 Console")
+                    .item(&about_item)
+                    .separator()
+                    .item(&PredefinedMenuItem::services(app.handle(), None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::hide(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::hide_others(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::show_all(app.handle(), None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::quit(app.handle(), None)?)
+                    .build()?;
+                let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                    .item(&PredefinedMenuItem::undo(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::redo(app.handle(), None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::cut(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::copy(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::paste(app.handle(), None)?)
+                    .item(&PredefinedMenuItem::select_all(app.handle(), None)?)
+                    .build()?;
+                MenuBuilder::new(app)
+                    .item(&app_submenu)
+                    .item(&edit_submenu)
+                    .build()?
+            };
+
+            #[cfg(not(target_os = "macos"))]
+            let menu = {
+                let file_submenu = SubmenuBuilder::new(app, "File")
+                    .item(&PredefinedMenuItem::quit(app.handle(), None)?)
+                    .build()?;
+                let help_submenu = SubmenuBuilder::new(app, "Help")
+                    .item(&about_item)
+                    .build()?;
+                MenuBuilder::new(app)
+                    .item(&file_submenu)
+                    .item(&help_submenu)
+                    .build()?
+            };
+
+            app.set_menu(menu)?;
+            app.on_menu_event(|app_handle, event| {
+                if event.id() == ABOUT_MENU_ID {
+                    let _ = app_handle.emit(ABOUT_EVENT, ());
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())

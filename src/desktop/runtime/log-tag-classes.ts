@@ -1,5 +1,19 @@
 import type { LogTag } from '../../core/types.js';
 
+export function getTagDotClass(tag: LogTag): string {
+  switch (tag) {
+    case 'ACK':    return 'bg-teal-500';
+    case 'CHANGE': return 'bg-amber-500';
+    case 'ERROR':  return 'bg-red-500';
+    case 'LOG':    return 'bg-sky-500';
+    case 'SYSTEM': return 'bg-slate-500';
+    case 'RAW_RX': return 'bg-violet-500';
+    case 'BULK':   return 'bg-cyan-500';
+    case 'RAW_TX': return 'bg-indigo-500';
+    default:       return 'bg-muted-foreground';
+  }
+}
+
 export function getTagClasses(tag: LogTag): string {
   switch (tag) {
     case 'ACK':    return 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300';

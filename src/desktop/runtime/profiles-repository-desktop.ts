@@ -1,6 +1,7 @@
 import { readProfilesFile, writeProfilesFile } from './tauri-fs.js';
 import type { LogTag } from '../../core/types.js';
 import type { Macro, MacroStep } from '@pro/macros/types.js';
+import type { TriggerAction, TriggerActionKind, TriggerRule, HighlightColor } from '@pro/triggers/types.js';
 
 export interface ProfilesPersistence {
   read: () => Promise<string | null>;
@@ -15,6 +16,44 @@ const defaultPersistence: ProfilesPersistence = {
 const VALID_TAGS: ReadonlySet<LogTag> = new Set([
   'ACK', 'RAW_RX', 'RAW_TX', 'BULK', 'CHANGE', 'ERROR', 'LOG', 'SYSTEM',
 ]);
+
+const VALID_ACTION_KINDS: ReadonlySet<TriggerActionKind> = new Set(['highlight', 'beep', 'notify', 'pause']);
+const VALID_COLORS: ReadonlySet<HighlightColor> = new Set(['red', 'amber', 'emerald', 'blue', 'violet']);
+
+function sanitizeTriggers(raw: unknown): TriggerRule[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: TriggerRule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.id !== 'string' || typeof r.name !== 'string') continue;
+    if (typeof r.match !== 'string') continue;
+    if (!Array.isArray(r.actions)) continue;
+    const actions: TriggerAction[] = [];
+    for (const a of r.actions) {
+      if (!a || typeof a !== 'object') continue;
+      const ac = a as Record<string, unknown>;
+      if (typeof ac.kind !== 'string' || !VALID_ACTION_KINDS.has(ac.kind as TriggerActionKind)) continue;
+      const action: TriggerAction = { kind: ac.kind as TriggerActionKind };
+      if (action.kind === 'highlight' && typeof ac.color === 'string' && VALID_COLORS.has(ac.color as HighlightColor)) {
+        action.color = ac.color as HighlightColor;
+      }
+      if (action.kind === 'notify' && typeof ac.message === 'string') {
+        action.message = ac.message;
+      }
+      actions.push(action);
+    }
+    if (actions.length === 0) continue;
+    out.push({
+      id: r.id,
+      name: r.name,
+      enabled: typeof r.enabled === 'boolean' ? r.enabled : true,
+      match: r.match,
+      actions,
+    });
+  }
+  return out;
+}
 
 function sanitizeMacros(raw: unknown): Macro[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -57,6 +96,7 @@ export interface ConnectionProfile {
   updatedAt: string;
   logTagFilters?: LogTag[];
   macros?: Macro[];
+  triggers?: TriggerRule[];
 }
 
 interface ProfilesFile {
@@ -95,10 +135,12 @@ export class DesktopProfilesRepository {
               .filter((t): t is LogTag => typeof t === 'string' && VALID_TAGS.has(t as LogTag))
             : undefined;
           const macros = sanitizeMacros((p as { macros?: unknown }).macros);
+          const triggers = sanitizeTriggers((p as { triggers?: unknown }).triggers);
           return {
             ...p,
             logTagFilters: tags,
             macros,
+            triggers,
           };
         }) : [];
       return {
@@ -129,6 +171,7 @@ export class DesktopProfilesRepository {
     makeDefault?: boolean;
     logTagFilters?: LogTag[];
     macros?: Macro[];
+    triggers?: TriggerRule[];
   }): Promise<void> {
     const data = await this.readAll();
     const ts = nowIso();
@@ -144,10 +187,20 @@ export class DesktopProfilesRepository {
       updatedAt: ts,
       logTagFilters: input.logTagFilters !== undefined ? input.logTagFilters : prev?.logTagFilters,
       macros: input.macros !== undefined ? input.macros : prev?.macros,
+      triggers: input.triggers !== undefined ? input.triggers : prev?.triggers,
     };
     if (idx >= 0) data.profiles[idx] = profile;
     else data.profiles.push(profile);
     if (input.makeDefault || !data.defaultProfile) data.defaultProfile = input.name;
+    await this.writeAll(data);
+  }
+
+  async setTriggers(name: string, triggers: TriggerRule[]): Promise<void> {
+    const data = await this.readAll();
+    const idx = data.profiles.findIndex((p) => p.name === name);
+    if (idx < 0) return;
+    const prev = data.profiles[idx];
+    data.profiles[idx] = { ...prev, triggers, updatedAt: nowIso() };
     await this.writeAll(data);
   }
 

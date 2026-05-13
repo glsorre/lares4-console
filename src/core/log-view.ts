@@ -1,4 +1,5 @@
-import type { LogEntry, LogTag } from './types.js';
+import { entrySource } from './types.js';
+import type { LogEntry, LogSource, LogTag } from './types.js';
 
 const MERGEABLE_TAGS: ReadonlySet<LogTag> = new Set(['CHANGE', 'BULK', 'RAW_RX', 'ACK']);
 
@@ -23,6 +24,7 @@ export interface RenderRow {
 export interface MessageListItem {
   id: string;
   tag: LogTag;
+  source: LogSource;
   ts: string;
   preview: string;
   collapsed: boolean;
@@ -216,6 +218,7 @@ export function buildMessageListItems(
     items.push({
       id,
       tag: first.tag,
+      source: entrySource(first),
       ts: first.ts,
       preview: folded && !expanded ? `${previewBase} [collapsed]` : previewBase,
       collapsed: Boolean(folded && !expanded),

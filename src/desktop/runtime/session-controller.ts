@@ -1,7 +1,11 @@
-import { LogStore } from '../../core/log-store.js';
+import { LogStore, type Bookmark } from '../../core/log-store.js';
+import { buildTopology, type TopologySnapshot } from '../../core/topology.js';
+import { adaptLares4Topology } from './topology-adapter.js';
+import { evaluateTriggers } from '@pro/triggers/engine.js';
+import type { TriggerRule } from '@pro/triggers/types.js';
 import { DEFAULT_EVENT_FILTERS } from '../../core/defaults.js';
 import { executeCommand } from '../../core/command-router.js';
-import type { EventFilter, LogEntry, LogTag, OutputFormat } from '../../core/types.js';
+import type { EventFilter, LogEntry, LogSource, LogTag, OutputFormat } from '../../core/types.js';
 import { nowIso, safeJson, formatOutput, shouldPrint } from '../../core/utils.js';
 import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
@@ -15,6 +19,8 @@ import { MacroEngine } from '@pro/macros/engine.js';
 import { isFeatureLicensed } from './commercial-license-prefs.js';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
+
+const PENDING_TX_TIMEOUT_MS = 30_000;
 
 export interface ConnectInput {
   ip: string;
@@ -46,6 +52,17 @@ export interface SessionSnapshot {
   activeMacro?: ActiveMacroSnapshot;
   recordingMacro: boolean;
   recordingMacroSteps: number;
+  topology: TopologySnapshot;
+  bookmarks: Bookmark[];
+  triggers: TriggerRule[];
+  pendingTxCount: number;
+  liveStreamPaused: boolean;
+  licensed: {
+    macros: boolean;
+    tabs: boolean;
+    triggers: boolean;
+    annotations: boolean;
+  };
 }
 
 export type CreateLaresClientFn = (
@@ -57,6 +74,9 @@ export interface SessionControllerDeps {
   createClient?: CreateLaresClientFn;
   profiles?: DesktopProfilesRepository;
   isMacrosLicensed?: () => boolean;
+  isTabsLicensed?: () => boolean;
+  isTriggersLicensed?: () => boolean;
+  isAnnotationsLicensed?: () => boolean;
 }
 
 function generateId(): string {
@@ -73,12 +93,16 @@ function parseReplayContent(raw: string): ReplayEvent[] {
     if (typeof parsed.atMs !== 'number' || !parsed.entry) continue;
     const entry = parsed.entry as Partial<LogEntry>;
     if (!entry.ts || !entry.tag || !entry.level || !entry.message) continue;
+    const source: LogEntry['source'] = entry.source === 'command' || entry.source === 'wire' || entry.source === 'lifecycle'
+      ? entry.source
+      : undefined;
     events.push({
       atMs: Math.max(0, Math.floor(parsed.atMs)),
       entry: {
         ts: entry.ts,
         tag: entry.tag as LogEntry['tag'],
         level: entry.level as LogEntry['level'],
+        source,
         message: entry.message,
         groupId: typeof entry.groupId === 'string' ? entry.groupId : undefined,
       },
@@ -115,14 +139,35 @@ export class SessionController {
   private macroRecordingPrevAtMs = 0;
   private submittingFromMacro = false;
   private readonly isMacrosLicensed: () => boolean;
+  private readonly isTabsLicensed: () => boolean;
+  private readonly isTriggersLicensed: () => boolean;
+  private readonly isAnnotationsLicensed: () => boolean;
+  private triggers: TriggerRule[] = [];
+  private readonly pendingTx = new Map<string, {
+    sentAtMs: number;
+    txGroupId: string;
+    cmd: string;
+    payloadType?: string;
+    source: LogSource;
+  }>();
+  /** Cache of recently-consumed correlations so the second observer (recordReceived vs onSocketMessage)
+   *  can still attribute its source after the first observer drained `pendingTx`. */
+  private readonly resolvedCorrelations = new Map<string, { cmdId: string; latencyMs: number; source: LogSource }>();
+  /** Reentrant counter: when > 0 the active call stack is running a user-issued command, so
+   *  wire frames emitted during it attribute to `'command'`. */
+  private commandSourceDepth = 0;
+  private liveStreamPaused = false;
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
     this.profiles = deps.profiles ?? new DesktopProfilesRepository();
     this.isMacrosLicensed = deps.isMacrosLicensed ?? (() => isFeatureLicensed('macros'));
+    this.isTabsLicensed = deps.isTabsLicensed ?? (() => isFeatureLicensed('tabs'));
+    this.isTriggersLicensed = deps.isTriggersLicensed ?? (() => isFeatureLicensed('triggers'));
+    this.isAnnotationsLicensed = deps.isAnnotationsLicensed ?? (() => isFeatureLicensed('annotations'));
     this.replayEngine = new ReplayEngine(
       (entry) => {
-        this.store.push(entry);
+        this.store.push({ ...entry, source: entry.source ?? 'lifecycle' });
         this.emit();
       },
       () => {
@@ -138,7 +183,7 @@ export class SessionController {
       () => this.emit(),
       (err, stepIndex) => {
         this.store.push({
-          level: 'error', tag: 'ERROR',
+          level: 'error', tag: 'ERROR', source: 'command',
           message: `Macro step ${String(stepIndex + 1)} failed: ${err.message}`,
         });
         this.emit();
@@ -177,7 +222,64 @@ export class SessionController {
       activeMacro,
       recordingMacro: this.macroRecordingBuffer !== undefined,
       recordingMacroSteps: this.macroRecordingBuffer?.length ?? 0,
+      topology: this.computeTopology(),
+      bookmarks: this.store.listBookmarks(),
+      triggers: this.triggers,
+      pendingTxCount: this.pendingTx.size,
+      liveStreamPaused: this.liveStreamPaused,
+      licensed: {
+        macros: this.isMacrosLicensed(),
+        tabs: this.isTabsLicensed(),
+        triggers: this.isTriggersLicensed(),
+        annotations: this.isAnnotationsLicensed(),
+      },
     };
+  }
+
+  private computeTopology(): TopologySnapshot {
+    if (!this.lares) return { groups: [], total: 0 };
+    return buildTopology(adaptLares4Topology(this.lares));
+  }
+
+  private requireTriggersLicense(): void {
+    if (!this.isTriggersLicensed()) {
+      throw new Error('Triggers require a commercial license.');
+    }
+  }
+
+  private requireAnnotationsLicense(): void {
+    if (!this.isAnnotationsLicensed()) {
+      throw new Error('Pin and bookmarks require a commercial license.');
+    }
+  }
+
+  toggleBookmark(groupId: string, note?: string): void {
+    this.requireAnnotationsLicense();
+    this.store.toggleBookmark(groupId, note);
+    this.emit();
+  }
+
+  setBookmarkNote(groupId: string, note: string | undefined): void {
+    this.requireAnnotationsLicense();
+    this.store.setBookmarkNote(groupId, note);
+    this.emit();
+  }
+
+  isBookmarked(groupId: string): boolean {
+    return this.store.isBookmarked(groupId);
+  }
+
+  async exportBookmarks(path?: string): Promise<string> {
+    this.requireAnnotationsLicense();
+    const destination = path ?? await resolveDefaultSessionPath('bookmarks', '.json');
+    const entries = this.store.all();
+    const bookmarks = this.store.listBookmarks();
+    const enriched = bookmarks.map((bookmark) => {
+      const group = entries.filter((e) => e.groupId === bookmark.groupId);
+      return { ...bookmark, entries: group };
+    });
+    await writeUtf8File(destination, JSON.stringify(enriched, null, 2));
+    return destination;
   }
 
   async connect(input: ConnectInput): Promise<void> {
@@ -187,14 +289,19 @@ export class SessionController {
       const profile = await this.profiles.get(input.profileName);
       this.logTagFilters = profile?.logTagFilters;
       this.macros = profile?.macros ?? [];
+      this.triggers = profile?.triggers ?? [];
     } else {
       this.logTagFilters = undefined;
       this.macros = [];
+      this.triggers = [];
     }
     this.emit();
     try {
       const factory = this.deps.createClient ?? createLaresClient;
-      const client = await factory(input, { onSocketSend: (raw) => this.recordSent(raw) });
+      const client = await factory(input, {
+        onSocketSend: (raw) => this.recordSent(raw),
+        onSocketReceive: (raw) => this.recordReceived(raw),
+      });
       this.lares = client.lares;
       this.socket = client.socket;
       this.unsubscribeSocket = client.socket.messages.subscribe((event) => this.onSocketMessage(event));
@@ -216,6 +323,9 @@ export class SessionController {
     this.macroEngine.stop();
     this.macroRecordingBuffer = undefined;
     this.macros = [];
+    this.triggers = [];
+    this.pendingTx.clear();
+    this.liveStreamPaused = false;
     this.unsubscribeSocket?.();
     this.unsubscribeSocket = undefined;
     this.lares?.close();
@@ -225,6 +335,22 @@ export class SessionController {
     this.connectionStatus = 'idle';
     this.error = undefined;
     this.activeProfileName = undefined;
+    this.emit();
+  }
+
+  listTriggers(): TriggerRule[] {
+    return this.triggers;
+  }
+
+  async saveTriggers(triggers: TriggerRule[]): Promise<void> {
+    this.requireTriggersLicense();
+    this.triggers = triggers;
+    this.emit();
+    if (this.activeProfileName) await this.profiles.setTriggers(this.activeProfileName, triggers);
+  }
+
+  setLiveStreamPaused(paused: boolean): void {
+    this.liveStreamPaused = paused;
     this.emit();
   }
 
@@ -357,9 +483,9 @@ export class SessionController {
     this.commandLine = '';
     const groupId = `cmd-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
     try {
-      const items = await executeCommand(line, {
-        lares: this.lares,
-        socketSend: this.socket.send,
+      const items = await this.runWithCommandSource(() => executeCommand(line, {
+        lares: this.lares!,
+        socketSend: this.socket!.send,
         outputFormat: this.outputFormat,
         eventFilters: this.eventFilters,
         onEventFiltersChanged: (next) => { this.eventFilters = next; },
@@ -370,7 +496,7 @@ export class SessionController {
         getStateSnapshot: (scope) => this.stateScopeSnapshot(scope),
         onRecordCommand: async (args) => await this.handleRecordCommand(args),
         onReplayCommand: async (args) => await this.handleReplayCommand(args),
-      });
+      }));
       for (const item of items) {
         if (item === '__EXIT__') {
           this.disconnect();
@@ -386,10 +512,21 @@ export class SessionController {
       this.store.push({
         level: 'error',
         tag: 'ERROR',
+        source: 'command',
         message: error instanceof Error ? error.message : String(error),
       });
     }
     this.emit();
+  }
+
+  /** Run `fn` with the command-source flag raised so any wire frames emitted during the call attribute to `'command'`. */
+  private async runWithCommandSource<T>(fn: () => Promise<T>): Promise<T> {
+    this.commandSourceDepth += 1;
+    try {
+      return await fn();
+    } finally {
+      this.commandSourceDepth -= 1;
+    }
   }
 
   async listProfiles() {
@@ -515,42 +652,203 @@ export class SessionController {
       return;
     }
     this.maybeRecordEvent(event);
+    let pushed = false;
     if (event.type === 'error' && shouldPrint(this.eventFilters, 'errors')) {
       const isObj = typeof event.message !== 'string' && event.message !== undefined;
       this.store.push({
         level: 'error',
         tag: 'ERROR',
+        source: 'lifecycle',
         message: typeof event.message === 'string' ? event.message : safeJson(event.message),
         payload: isObj ? event.message : undefined,
       });
-    } else if (event.type === 'raw' && shouldPrint(this.eventFilters, 'raw')) {
+      pushed = true;
+    } else if (event.type === 'raw') {
+      // Handled by recordReceived (WS-layer monkey-patch). No-op here to avoid double push.
+    } else if (event.type === 'response') {
       const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'debug', tag: 'RAW_RX', message: text, payload });
-    } else if (event.type === 'response' && shouldPrint(this.eventFilters, 'acks')) {
-      const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'info', tag: 'ACK', message: text, payload });
+      const correlation = this.correlateAck(payload);
+      if (correlation) {
+        this.store.patchByGroupId(`rawtx-${correlation.cmdId}`, {
+          correlationId: correlation.cmdId,
+          latencyMs: correlation.latencyMs,
+        });
+      }
+      if (shouldPrint(this.eventFilters, 'acks')) {
+        this.store.push({
+          level: 'info',
+          tag: 'ACK',
+          source: correlation?.source ?? 'lifecycle',
+          message: text,
+          payload,
+          correlationId: correlation?.cmdId,
+          latencyMs: correlation?.latencyMs,
+        });
+        pushed = true;
+      }
     } else if (event.type === 'change' && shouldPrint(this.eventFilters, 'changes')) {
       const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'info', tag: 'CHANGE', message: text, payload });
+      this.store.push({ level: 'info', tag: 'CHANGE', source: 'lifecycle', message: text, payload });
+      pushed = true;
     } else if (event.type === 'multi_types' && shouldPrint(this.eventFilters, 'multitypes')) {
       const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'info', tag: 'BULK', message: text, payload });
+      this.store.push({ level: 'info', tag: 'BULK', source: 'lifecycle', message: text, payload });
+      pushed = true;
     }
+    if (pushed) this.runTriggersForLatest();
     this.emit();
   }
 
+  private correlateAck(payload: unknown): { cmdId: string; latencyMs: number; source: LogSource } | undefined {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+    const obj = payload as Record<string, unknown>;
+    const inner = obj.PAYLOAD && typeof obj.PAYLOAD === 'object' && !Array.isArray(obj.PAYLOAD)
+      ? obj.PAYLOAD as Record<string, unknown>
+      : undefined;
+    // 1. Direct ID match.
+    const rawId = obj.ID ?? inner?.ID;
+    if (rawId !== undefined && rawId !== null) {
+      const cmdId = String(rawId);
+      const pending = this.pendingTx.get(cmdId);
+      if (pending) {
+        this.pendingTx.delete(cmdId);
+        const resolved = { cmdId, latencyMs: Math.max(0, Date.now() - pending.sentAtMs), source: pending.source };
+        this.rememberResolvedCorrelation(resolved);
+        return resolved;
+      }
+      const cached = this.resolvedCorrelations.get(cmdId);
+      if (cached) return cached;
+    }
+    // 2. CMD/PAYLOAD_TYPE-pair fallback (panel may not echo request ID).
+    const replyCmd = typeof obj.CMD === 'string' ? obj.CMD : undefined;
+    if (!replyCmd) return undefined;
+    const strippedCmd = replyCmd.endsWith('_RES') ? replyCmd.slice(0, -4) : replyCmd;
+    const replyPayloadType = typeof obj.PAYLOAD_TYPE === 'string' ? obj.PAYLOAD_TYPE : undefined;
+    const strippedPayloadType = replyPayloadType?.endsWith('_ACK')
+      ? replyPayloadType.slice(0, -4)
+      : replyPayloadType;
+    let oldest: { id: string; sentAtMs: number; source: LogSource } | undefined;
+    for (const [id, pending] of this.pendingTx) {
+      if (pending.cmd !== strippedCmd) continue;
+      if (strippedPayloadType !== undefined
+        && pending.payloadType !== undefined
+        && pending.payloadType !== strippedPayloadType) continue;
+      if (!oldest || pending.sentAtMs < oldest.sentAtMs) {
+        oldest = { id, sentAtMs: pending.sentAtMs, source: pending.source };
+      }
+    }
+    if (!oldest) return undefined;
+    this.pendingTx.delete(oldest.id);
+    const resolved = { cmdId: oldest.id, latencyMs: Math.max(0, Date.now() - oldest.sentAtMs), source: oldest.source };
+    this.rememberResolvedCorrelation(resolved);
+    return resolved;
+  }
+
+  private rememberResolvedCorrelation(resolved: { cmdId: string; latencyMs: number; source: LogSource }): void {
+    this.resolvedCorrelations.set(resolved.cmdId, resolved);
+    if (this.resolvedCorrelations.size > 64) {
+      const oldestKey = this.resolvedCorrelations.keys().next().value;
+      if (oldestKey !== undefined) this.resolvedCorrelations.delete(oldestKey);
+    }
+  }
+
+  private runTriggersForLatest(): void {
+    if (this.triggers.length === 0) return;
+    if (!this.isTriggersLicensed()) return;
+    const all = this.store.view();
+    const latest = all[all.length - 1];
+    if (!latest) return;
+    const result = evaluateTriggers(latest, this.triggers);
+    if (result.matchedRuleIds.length === 0) return;
+    if (result.highlightColor) {
+      this.store.patchLast((e) => e === latest, { highlight: result.highlightColor });
+    }
+    if (result.beep) this.tryBeep();
+    for (const n of result.notify) this.tryNotify(n.ruleName, n.message);
+    if (result.pause) this.liveStreamPaused = true;
+  }
+
+  private tryBeep(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.value = 0.1;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+      setTimeout(() => { void ctx.close(); }, 250);
+    } catch { /* ignore */ }
+  }
+
+  private tryNotify(title: string, body: string): void {
+    if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
+    try {
+      if (Notification.permission === 'granted') {
+        new Notification(title, { body: body.slice(0, 240) });
+      } else if (Notification.permission !== 'denied') {
+        void Notification.requestPermission().then((perm) => {
+          if (perm === 'granted') new Notification(title, { body: body.slice(0, 240) });
+        });
+      }
+    } catch { /* ignore */ }
+  }
+
   private recordSent(raw: string): void {
-    if (!shouldPrint(this.eventFilters, 'sent')) return;
     let payload: unknown;
     try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
     const cmdObj = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined;
     const cmdName = typeof cmdObj?.CMD === 'string' ? cmdObj.CMD : 'CMD';
-    const cmdId = cmdObj?.ID !== undefined ? String(cmdObj.ID) : `t${String(Date.now())}`;
+    const payloadType = typeof cmdObj?.PAYLOAD_TYPE === 'string' ? cmdObj.PAYLOAD_TYPE : undefined;
+    const hasRealId = cmdObj?.ID !== undefined;
+    const cmdId = hasRealId ? String(cmdObj?.ID) : `t${String(Date.now())}`;
     const groupId = `rawtx-${cmdId}`;
+    const correlationId = hasRealId ? cmdId : undefined;
+    const source: LogSource = this.commandSourceDepth > 0 ? 'command' : 'wire';
+    if (hasRealId) {
+      this.pendingTx.set(cmdId, { sentAtMs: Date.now(), txGroupId: groupId, cmd: cmdName, payloadType, source });
+      this.sweepPendingTx();
+    }
+    if (!shouldPrint(this.eventFilters, 'sent')) {
+      this.emit();
+      return;
+    }
     const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
-    this.store.push({ level: 'info', tag: 'RAW_TX', groupId, message: `→ ${cmdName}` });
-    this.store.push({ level: 'info', tag: 'RAW_TX', groupId, message: text, payload });
+    this.store.push({ level: 'info', tag: 'RAW_TX', source, groupId, message: `→ ${cmdName}`, correlationId });
+    this.store.push({ level: 'info', tag: 'RAW_TX', source, groupId, message: text, payload, correlationId });
+    this.runTriggersForLatest();
     this.emit();
+  }
+
+  private recordReceived(raw: string): void {
+    let payload: unknown;
+    try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
+    const correlation = this.correlateAck(payload);
+    if (correlation) {
+      this.store.patchByGroupId(`rawtx-${correlation.cmdId}`, {
+        correlationId: correlation.cmdId,
+        latencyMs: correlation.latencyMs,
+      });
+    }
+    if (!shouldPrint(this.eventFilters, 'raw')) {
+      this.emit();
+      return;
+    }
+    const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
+    const source: LogSource = correlation?.source ?? 'wire';
+    this.store.push({ level: 'debug', tag: 'RAW_RX', source, message: text, payload });
+    this.runTriggersForLatest();
+    this.emit();
+  }
+
+  private sweepPendingTx(): void {
+    const cutoff = Date.now() - PENDING_TX_TIMEOUT_MS;
+    for (const [id, pending] of this.pendingTx) {
+      if (pending.sentAtMs < cutoff) this.pendingTx.delete(id);
+    }
   }
 
   private coerceEventMessage(raw: string | Record<string, unknown> | undefined): { text: string; payload?: unknown } {
@@ -577,12 +875,14 @@ export class SessionController {
             ? 'BULK'
             : 'RAW_RX';
     const level = event.type === 'error' ? 'error' : event.type === 'raw' ? 'debug' : 'info';
+    const source: LogSource = event.type === 'raw' ? 'wire' : 'lifecycle';
     this.pendingReplayRecord.push({
       atMs: Math.max(0, Date.now() - this.recordingStartedAtMs),
       entry: {
         ts: nowIso(),
         level,
         tag,
+        source,
         message: typeof event.message === 'string' ? event.message : safeJson(event.message),
       },
     });
@@ -592,6 +892,7 @@ export class SessionController {
     this.store.push({
       level: 'info',
       tag: 'LOG',
+      source: 'command',
       message: text.length > 0 ? text : ' ',
       groupId,
       payload,
@@ -599,6 +900,6 @@ export class SessionController {
   }
 
   private pushSystemMessage(text: string): void {
-    this.store.push({ level: 'info', tag: 'SYSTEM', message: text });
+    this.store.push({ level: 'info', tag: 'SYSTEM', source: 'lifecycle', message: text });
   }
 }

@@ -11,6 +11,7 @@ export interface ClientEnv {
 
 export interface CreateLaresClientOptions {
   onSocketSend?: (raw: string) => void;
+  onSocketReceive?: (raw: string) => void;
 }
 
 const consoleLogger: GenericLogger = {
@@ -20,7 +21,10 @@ const consoleLogger: GenericLogger = {
   debug: (msg) => console.debug(msg),
 };
 
-function buildWsFactory(onSocketSend?: (raw: string) => void): Lares4WsFactory {
+function buildWsFactory(
+  onSocketSend?: (raw: string) => void,
+  onSocketReceive?: (raw: string) => void,
+): Lares4WsFactory {
   return (url, protocols) => {
     const ws = new WebSocket(url, protocols);
     if (onSocketSend) {
@@ -32,6 +36,13 @@ function buildWsFactory(onSocketSend?: (raw: string) => void): Lares4WsFactory {
         origSend(data);
       }) as WebSocket['send'];
     }
+    if (onSocketReceive) {
+      ws.addEventListener('message', (event) => {
+        if (typeof event.data === 'string') {
+          try { onSocketReceive(event.data); } catch { /* never break receive path */ }
+        }
+      });
+    }
     return ws;
   };
 }
@@ -39,7 +50,7 @@ function buildWsFactory(onSocketSend?: (raw: string) => void): Lares4WsFactory {
 export async function createLaresClient(env: ClientEnv, options: CreateLaresClientOptions = {}) {
   const lares = await Lares4Factory.createLares4(env.sender, env.ip, env.pin, env.wss, {
     logger: consoleLogger,
-    wsFactory: buildWsFactory(options.onSocketSend),
+    wsFactory: buildWsFactory(options.onSocketSend, options.onSocketReceive),
   });
   const socket = (lares as unknown as {
     _ws?: {

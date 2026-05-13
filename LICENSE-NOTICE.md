@@ -9,9 +9,11 @@ All source files outside the `src/pro/` directory are licensed under the
 
 ## `src/pro/` — PolyForm Noncommercial License 1.0.0
 
-Files within `src/pro/` (including the macro feature in `src/pro/macros/`)
+Files within `src/pro/` (including the macro feature in `src/pro/macros/`,
+multi-connection tabs in `src/pro/tabs/`, trigger rules in
+`src/pro/triggers/`, and pin & bookmarks in `src/pro/annotations/`)
 are licensed under the **PolyForm Noncommercial License 1.0.0**
-(see `src/pro/macros/LICENSE`).
+(see the `LICENSE` file inside each `src/pro/<subdir>/`).
 
 In short: those files may be used freely for any noncommercial purpose
 (personal use, research, education, charitable organizations, government

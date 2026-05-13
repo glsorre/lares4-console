@@ -153,6 +153,281 @@ describe('SessionController', () => {
     assert.equal(data.defaultProfile, 'b');
   });
 
+  it('correlates ACK with sent TX and records latency', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"LIGHTS","ID":"42","PAYLOAD":{"STA":"ON"}}');
+    assert.equal(c.snapshot().pendingTxCount, 1);
+    const cb = subs[0];
+    cb({ type: 'response', message: '{"ID":"42","PAYLOAD":{"RESULT":"OK"}}' });
+    const snap = c.snapshot();
+    const ack = snap.logEntries.find((e) => e.tag === 'ACK');
+    assert.ok(ack);
+    assert.equal(ack?.correlationId, '42');
+    assert.equal(typeof ack?.latencyMs, 'number');
+    assert.equal(snap.pendingTxCount, 0);
+    const taggedTx = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '42');
+    assert.equal(taggedTx.length, 2);
+    assert.equal(taggedTx[0]?.latencyMs, ack?.latencyMs);
+  });
+
+  it('correlates ACK even when sent and acks filters are disabled', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // Disable both sent and acks rendering; correlation must still work.
+    await c.submit('events errors');
+    captured?.('{"CMD":"LIGHTS","ID":"99","PAYLOAD":{"STA":"ON"}}');
+    assert.equal(c.snapshot().pendingTxCount, 1);
+    subs[0]({ type: 'response', message: '{"ID":"99","PAYLOAD":{"RESULT":"OK"}}' });
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 0);
+    // No RAW_TX or ACK rendered (filter excluded both), but pending is cleared.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'RAW_TX').length, 0);
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
+  });
+
+  it('clears pending on WS receive when no response is emitted (READ_RES path)', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        capturedReceive = options?.onSocketReceive;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"READ","ID":"5","PAYLOAD":{"TYPES":["LIGHTS"]}}');
+    assert.equal(c.snapshot().pendingTxCount, 1);
+    // Simulate lares4-ts: READ_RES arrives via WS message hook, never as `response`.
+    capturedReceive?.('{"CMD":"READ_RES","ID":"5","PAYLOAD":{"RESULT":"OK"}}');
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 0);
+    const tx = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '5');
+    assert.equal(tx.length, 2);
+    assert.equal(typeof tx[0]?.latencyMs, 'number');
+    // No ACK pushed since no response event fired — only RAW_RX.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
+    assert.ok(snap.logEntries.some((e) => e.tag === 'RAW_RX'));
+  });
+
+  it('correlates by CMD/PAYLOAD_TYPE pair when reply ID does not echo request ID', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        capturedReceive = options?.onSocketReceive;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"LOGIN","ID":"1","PAYLOAD_TYPE":"UNKNOWN","PAYLOAD":{}}');
+    assert.equal(c.snapshot().pendingTxCount, 1);
+    capturedReceive?.('{"CMD":"LOGIN_RES","ID":"999","PAYLOAD_TYPE":"UNKNOWN","PAYLOAD":{}}');
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 0);
+    const tx = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '1');
+    assert.equal(tx.length, 2);
+    assert.equal(typeof tx[0]?.latencyMs, 'number');
+  });
+
+  it('correlates READ_RES by CMD pair, FIFO when payload_type differs', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        capturedReceive = options?.onSocketReceive;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"READ","ID":"1","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{}}');
+    captured?.('{"CMD":"READ","ID":"2","PAYLOAD_TYPE":"CFG_THERMOSTATS","PAYLOAD":{}}');
+    assert.equal(c.snapshot().pendingTxCount, 2);
+    capturedReceive?.('{"CMD":"READ_RES","ID":"99","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{}}');
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 1);
+    // The matched one is id=1 (STATUS_SYSTEM); id=2 (CFG_THERMOSTATS) still pending.
+    const tx1 = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '1');
+    assert.equal(tx1.length, 2);
+    assert.equal(typeof tx1[0]?.latencyMs, 'number');
+    const tx2 = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '2');
+    assert.equal(tx2[0]?.latencyMs, undefined);
+  });
+
+  it('correlates REGISTER_ACK by stripping _ACK suffix on PAYLOAD_TYPE', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        capturedReceive = options?.onSocketReceive;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"REALTIME","ID":"1","PAYLOAD_TYPE":"REGISTER","PAYLOAD":{}}');
+    capturedReceive?.('{"CMD":"REALTIME_RES","ID":"42","PAYLOAD_TYPE":"REGISTER_ACK","PAYLOAD":{}}');
+    assert.equal(c.snapshot().pendingTxCount, 0);
+  });
+
+  it('correlateAck reads ID from PAYLOAD.ID fallback', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"LIGHTS","ID":"7","PAYLOAD":{"STA":"ON"}}');
+    // ACK with ID buried inside PAYLOAD.
+    subs[0]({ type: 'response', message: '{"PAYLOAD":{"ID":"7","RESULT":"OK"}}' });
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 0);
+    const ack = snap.logEntries.find((e) => e.tag === 'ACK');
+    assert.equal(ack?.correlationId, '7');
+  });
+
+  it('pendingTx ages out unacked entries after timeout', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    const realNow = Date.now;
+    let fakeNow = realNow();
+    Date.now = () => fakeNow;
+    try {
+      captured?.('{"CMD":"READ","ID":"1"}');
+      assert.equal(c.snapshot().pendingTxCount, 1);
+      // Advance past timeout; trigger sweep via a new TX.
+      fakeNow += 31_000;
+      captured?.('{"CMD":"READ","ID":"2"}');
+      // First entry aged out; only the new one is pending.
+      assert.equal(c.snapshot().pendingTxCount, 1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('trigger rule sets highlight on matching entries (licensed)', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isTriggersLicensed: () => true,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await c.saveTriggers([{
+      id: 'r1', name: 'errors-red', enabled: true, match: 'tag:ERROR',
+      actions: [{ kind: 'highlight', color: 'red' }],
+    }]);
+    subs[0]({ type: 'error', message: 'boom' });
+    const err = c.snapshot().logEntries.find((e) => e.tag === 'ERROR');
+    assert.equal(err?.highlight, 'red');
+  });
+
+  it('trigger pause action flips liveStreamPaused (licensed)', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isTriggersLicensed: () => true,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await c.saveTriggers([{
+      id: 'r1', name: 'pause-on-err', enabled: true, match: 'tag:ERROR',
+      actions: [{ kind: 'pause' }],
+    }]);
+    assert.equal(c.snapshot().liveStreamPaused, false);
+    subs[0]({ type: 'error', message: 'boom' });
+    assert.equal(c.snapshot().liveStreamPaused, true);
+  });
+
+  it('saveTriggers rejects when triggers unlicensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isTriggersLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await assert.rejects(
+      () => c.saveTriggers([{
+        id: 'r1', name: 'x', enabled: true, match: 'tag:ERROR',
+        actions: [{ kind: 'highlight', color: 'red' }],
+      }]),
+      /commercial license/,
+    );
+  });
+
+  it('unlicensed triggers do not evaluate stored rules', async () => {
+    // Pre-stage profile with a trigger that would normally highlight ERROR rows.
+    const initial = JSON.stringify({
+      version: 1,
+      defaultProfile: 'p',
+      profiles: [{
+        name: 'p', ip: '1', pin: '2', wss: true, sender: 's',
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+        triggers: [{
+          id: 'r1', name: 'x', enabled: true, match: 'tag:ERROR',
+          actions: [{ kind: 'highlight', color: 'red' }],
+        }],
+      }],
+    });
+    let stored = initial;
+    const repo = new DesktopProfilesRepository({
+      read: async () => stored,
+      write: async (content) => { stored = content; },
+    });
+    const { lares, socket, subs } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      profiles: repo,
+      isTriggersLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true, profileName: 'p' });
+    // Rules hydrate (read-only fallback).
+    assert.equal(c.snapshot().triggers.length, 1);
+    subs[0]({ type: 'error', message: 'boom' });
+    const err = c.snapshot().logEntries.find((e) => e.tag === 'ERROR');
+    assert.equal(err?.highlight, undefined);
+  });
+
+  it('toggleBookmark throws when annotations unlicensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isAnnotationsLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    assert.throws(() => c.toggleBookmark('g1'), /commercial license/);
+  });
+
   it('socket subscription receives response events as ACK logs', async () => {
     const { lares, socket, subs } = stubLaresAndSocket();
     const c = new SessionController({
@@ -343,5 +618,73 @@ describe('SessionController', () => {
     assert.ok(cmdtx[0]?.message.startsWith('→ CMD'));
     assert.equal(cmdtx[1]?.message, 'ping');
     assert.equal(cmdtx[1]?.payload, undefined);
+  });
+
+  it('attributes RAW_TX during executeCommand to source=command, ACK inherits', async () => {
+    const { lares, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const stubSocket: { send: (cmd: string, ptype: string, payload: Record<string, unknown>) => void;
+      messages: { subscribe: (fn: (e: SocketEventEmitted) => void) => () => void } } = {
+      // Bridge command-router socketSend → onSocketSend so recordSent fires inside the command context.
+      send: (cmd, ptype, payload) => {
+        const json = JSON.stringify({ CMD: cmd, PAYLOAD_TYPE: ptype, ID: '77', PAYLOAD: payload });
+        captured?.(json);
+      },
+      messages: {
+        subscribe(fn) {
+          subs.push(fn);
+          return () => {
+            const i = subs.indexOf(fn);
+            if (i >= 0) subs.splice(i, 1);
+          };
+        },
+      },
+    };
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket: stubSocket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await c.submit('raw send LIGHTS WRITE {"STA":"ON"}');
+    const tx = c.snapshot().logEntries.filter((e) => e.tag === 'RAW_TX');
+    assert.ok(tx.length >= 1, 'RAW_TX recorded');
+    assert.ok(tx.every((e) => e.source === 'command'),
+      'all RAW_TX from inside executeCommand attribute to command');
+    subs[0]({ type: 'response', message: '{"ID":"77","PAYLOAD":{"RESULT":"OK"}}' });
+    const ack = c.snapshot().logEntries.find((e) => e.tag === 'ACK');
+    assert.ok(ack);
+    assert.equal(ack?.source, 'command', 'ACK inherits source from matched pendingTx');
+  });
+
+  it('socket change events attribute to source=lifecycle', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    subs[0]({ type: 'change', message: '{"LIGHTS":{"ID":"1","STA":"ON"}}' });
+    const change = c.snapshot().logEntries.find((e) => e.tag === 'CHANGE');
+    assert.ok(change);
+    assert.equal(change?.source, 'lifecycle');
+  });
+
+  it('RAW_TX outside executeCommand attributes to source=wire', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = options?.onSocketSend;
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // Simulate a heartbeat-style send by the library, no user command in flight.
+    captured?.('{"CMD":"PING","ID":"500","PAYLOAD":{}}');
+    const tx = c.snapshot().logEntries.filter((e) => e.tag === 'RAW_TX');
+    assert.ok(tx.length >= 1);
+    assert.ok(tx.every((e) => e.source === 'wire'),
+      'unattributed RAW_TX falls to wire');
   });
 });

@@ -11,4 +11,16 @@ export default [
       'max-len': ['error', { code: 140, ignoreStrings: true }],
     },
   },
+  {
+    files: ['scripts/**/*.{js,mjs,cjs}', '*.config.{js,mjs,cjs,ts}'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+  },
 ];

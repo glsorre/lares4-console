@@ -1,16 +1,34 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
-import { Eraser, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Bookmark as BookmarkIcon, FileSearch } from 'lucide-react';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { BookmarksPane } from '@pro/annotations/ui/BookmarksPane.js';
 import { CommandPane } from '../components/CommandPane.js';
+import { CommercialLicenseDialog } from '../components/CommercialLicenseDialog.js';
 import { ConnectionSidebar } from '../components/ConnectionSidebar.js';
+import { ConsoleTopBar } from '../components/ConsoleTopBar.js';
 import { LogDetailPane } from '../components/LogDetailPane.js';
-import { LogsListPane } from '../components/LogsListPane.js';
+import { LogsListPane, type LogSourceFilter } from '../components/LogsListPane.js';
+import { TopologyPane } from '../components/TopologyPane.js';
+import { TriggersDialog } from '@pro/triggers/ui/TriggersDialog.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
-import { formatReplayLabel } from '../runtime/status-chips.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
+
+type DetailTab = 'detail' | 'bookmarks';
+
+const TOPOLOGY_RAIL_KEY = 'lares4.topologyRailOpen';
+const LOG_SOURCE_FILTER_KEY = 'lares4.logSourceFilter';
+
+function readLogSourceFilter(): LogSourceFilter {
+  try {
+    const raw = window.localStorage.getItem(LOG_SOURCE_FILTER_KEY);
+    if (raw === 'command' || raw === 'lifecycle' || raw === 'wire' || raw === 'all') return raw;
+  } catch { /* ignore */ }
+  return 'all';
+}
 
 export function ConsolePage() {
   const { controller, snapshot } = useSessionController();
@@ -18,15 +36,173 @@ export function ConsolePage() {
   const wide = useWideLayout();
   const [command, setCommand] = useState('');
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [pinnedId, setPinnedId] = useState<string | undefined>(undefined);
+  const [detailTab, setDetailTab] = useState<DetailTab>('detail');
+  const [triggersOpen, setTriggersOpen] = useState(false);
+  const [annotationsLockOpen, setAnnotationsLockOpen] = useState(false);
+  const [topologyRailOpen, setTopologyRailOpen] = useState<boolean>(readRailOpen);
+  const [railSheetOpen, setRailSheetOpen] = useState(false);
+  const [searchPulseKey, setSearchPulseKey] = useState(0);
+  const [sourceFilter, setSourceFilter] = useState<LogSourceFilter>(readLogSourceFilter);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(LOG_SOURCE_FILTER_KEY, sourceFilter); } catch { /* ignore */ }
+  }, [sourceFilter]);
+
+  const annotationsLicensed = snapshot.licensed.annotations;
+  const triggersLicensed = snapshot.licensed.triggers;
+
+  useEffect(() => {
+    if (!annotationsLicensed && pinnedId !== undefined) setPinnedId(undefined);
+  }, [annotationsLicensed, pinnedId]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(TOPOLOGY_RAIL_KEY, JSON.stringify(topologyRailOpen)); } catch { /* ignore */ }
+  }, [topologyRailOpen]);
 
   const canSubmit = useMemo(() => snapshot.connected && command.trim().length > 0, [snapshot.connected, command]);
   const msgCount = snapshot.logEntries.length;
+  const bookmarkedIds = useMemo(
+    () => new Set(snapshot.bookmarks.map((b) => b.groupId)),
+    [snapshot.bookmarks],
+  );
+
   useEffect(() => {
     if (snapshot.logEntries.length === 0) return;
     if (selectedId) return;
     const last = snapshot.logEntries[snapshot.logEntries.length - 1];
     if (last?.groupId) setSelectedId(last.groupId);
   }, [snapshot.logEntries, selectedId]);
+
+  function filterById(id: string) {
+    setSearchInput(`id:${id}`);
+    setSearchPulseKey((n) => n + 1);
+    if (!wide) setRailSheetOpen(false);
+  }
+
+  function selectFromBookmarks(id: string) {
+    setSelectedId(id);
+    setDetailTab('detail');
+  }
+
+  function openBookmarksTab() {
+    if (!annotationsLicensed) {
+      setAnnotationsLockOpen(true);
+      return;
+    }
+    setDetailTab('bookmarks');
+  }
+
+  function openTopologyRail() {
+    if (wide) {
+      setTopologyRailOpen(true);
+    } else {
+      setRailSheetOpen(true);
+    }
+  }
+
+  function closeTopologyRail() {
+    if (wide) {
+      setTopologyRailOpen(false);
+    } else {
+      setRailSheetOpen(false);
+    }
+  }
+
+  function runStateAll() {
+    if (!snapshot.connected) return;
+    void controller.submit('state all');
+  }
+
+  const detailTabs = useMemo(() => {
+    const tabs: Array<{ value: DetailTab; label: string; icon: typeof FileSearch; badge?: number; locked?: boolean }> = [
+      { value: 'detail', label: 'Detail', icon: FileSearch },
+      {
+        value: 'bookmarks',
+        label: 'Bookmarks',
+        icon: BookmarkIcon,
+        badge: snapshot.bookmarks.length || undefined,
+        locked: !annotationsLicensed,
+      },
+    ];
+    return tabs;
+  }, [snapshot.bookmarks.length, annotationsLicensed]);
+
+  const detailContent = (
+    <Tabs
+      value={detailTab}
+      onValueChange={(value) => {
+        if (value === 'bookmarks' && !annotationsLicensed) {
+          setAnnotationsLockOpen(true);
+          return;
+        }
+        setDetailTab(value as DetailTab);
+      }}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5"
+    >
+      <TabsList variant="line" className="self-start">
+        {detailTabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5 text-xs">
+              <Icon className="size-3.5" aria-hidden />
+              <span>{tab.label}</span>
+              {tab.locked && (
+                <span className="text-primary text-[0.65rem] font-medium">Unlock</span>
+              )}
+              {tab.badge !== undefined && (
+                <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">{tab.badge}</span>
+              )}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+      <TabsContent value="detail" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <LogDetailPane
+          entries={snapshot.logEntries}
+          selectedId={selectedId}
+          outputFormat={snapshot.outputFormat}
+          onFormatChange={(fmt) => controller.setOutputFormat(fmt)}
+        />
+      </TabsContent>
+      <TabsContent value="bookmarks" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <BookmarksPane
+          bookmarks={snapshot.bookmarks}
+          entries={snapshot.logEntries}
+          selectedId={selectedId}
+          onSelect={selectFromBookmarks}
+          onRemove={(groupId: string) => controller.toggleBookmark(groupId)}
+          onUpdateNote={(groupId: string, note: string | undefined) => controller.setBookmarkNote(groupId, note)}
+          onExport={() => controller.exportBookmarks()}
+          isLicensed={annotationsLicensed}
+        />
+      </TabsContent>
+    </Tabs>
+  );
+
+  const logsPanelContent = (
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      <LogsListPane
+        entries={snapshot.logEntries}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        tagFilters={snapshot.logTagFilters}
+        onTagFiltersChange={(next) => controller.setLogTagFilters(next)}
+        sourceFilter={sourceFilter}
+        onSourceFilterChange={(next) => {
+          setSourceFilter(next);
+          if (snapshot.logTagFilters !== undefined) controller.setLogTagFilters(undefined);
+        }}
+        searchInput={searchInput}
+        bookmarkedIds={bookmarkedIds}
+        onToggleBookmark={(id) => controller.toggleBookmark(id)}
+        pinnedId={pinnedId}
+        onPinnedIdChange={setPinnedId}
+        annotationsLicensed={annotationsLicensed}
+      />
+    </div>
+  );
 
   const resizeHandleHorizontal = (
     <Separator className="bg-border/80 hover:bg-border focus-visible:ring-ring mx-1.5 w-2 shrink-0 cursor-col-resize rounded-full transition-colors focus-visible:ring-2 focus-visible:outline-none" />
@@ -44,26 +220,11 @@ export function ConsolePage() {
       defaultLayout={{ logs: 40, detail: 60 }}
     >
       <Panel id="logs" minSize="22%" defaultSize="40%" className="min-w-0">
-        <div className="flex h-full min-h-0 min-w-0 flex-col pb-0.5">
-          <LogsListPane
-            entries={snapshot.logEntries}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            tagFilters={snapshot.logTagFilters}
-            onTagFiltersChange={(next) => controller.setLogTagFilters(next)}
-          />
-        </div>
+        {logsPanelContent}
       </Panel>
       {resizeHandleHorizontal}
       <Panel id="detail" minSize="22%" defaultSize="60%" className="min-w-0">
-        <div className="flex h-full min-h-0 min-w-0 flex-col pb-0.5">
-          <LogDetailPane
-            entries={snapshot.logEntries}
-            selectedId={selectedId}
-            outputFormat={snapshot.outputFormat}
-            onFormatChange={(fmt) => controller.setOutputFormat(fmt)}
-          />
-        </div>
+        {detailContent}
       </Panel>
     </Group>
   );
@@ -76,26 +237,11 @@ export function ConsolePage() {
       defaultLayout={{ logs: 46, detail: 54 }}
     >
       <Panel id="logs" minSize="20%" defaultSize="46%" className="min-w-0">
-        <div className="flex h-full min-h-0 min-w-0 flex-col pb-0.5">
-          <LogsListPane
-            entries={snapshot.logEntries}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            tagFilters={snapshot.logTagFilters}
-            onTagFiltersChange={(next) => controller.setLogTagFilters(next)}
-          />
-        </div>
+        {logsPanelContent}
       </Panel>
       {resizeHandleVertical}
       <Panel id="detail" minSize="20%" defaultSize="54%" className="min-w-0">
-        <div className="flex h-full min-h-0 min-w-0 flex-col pb-0.5">
-          <LogDetailPane
-            entries={snapshot.logEntries}
-            selectedId={selectedId}
-            outputFormat={snapshot.outputFormat}
-            onFormatChange={(fmt) => controller.setOutputFormat(fmt)}
-          />
-        </div>
+        {detailContent}
       </Panel>
     </Group>
   );
@@ -105,61 +251,53 @@ export function ConsolePage() {
   );
 
   const workspaceContent = (
-    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden px-4 py-4 sm:px-5">
-      {/* Toolbar */}
-      <div className="border-border/70 bg-pane/40 flex min-h-9 flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 ring-1 ring-border/35">
-        <div className="flex min-w-0 flex-wrap items-center gap-3" aria-live="polite">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 shrink-0 p-0 text-muted-foreground"
-            onClick={toggleSidebar}
-            aria-label={sidebarOpen ? 'Close connections panel' : 'Open connections panel'}
-            aria-pressed={sidebarOpen}
-          >
-            {sidebarOpen
-              ? <PanelLeftClose className="size-4" aria-hidden />
-              : <PanelLeftOpen className="size-4" aria-hidden />}
-          </Button>
-          {snapshot.connected && (
-            <>
-              <span className="text-muted-foreground font-mono text-xs tabular-nums">
-                {msgCount} {msgCount === 1 ? 'message' : 'messages'}
-              </span>
-              {snapshot.replayStatus && snapshot.replayStatus !== 'off' ? (
-                <>
-                  <span className="text-muted-foreground hidden sm:inline" aria-hidden>·</span>
-                  <span className="text-muted-foreground text-xs">
-                    Replay <span className="text-foreground font-mono">{formatReplayLabel(snapshot.replayStatus)}</span>
-                  </span>
-                </>
-              ) : null}
-            </>
-          )}
-        </div>
-        {snapshot.logEntries.length > 0 && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
-            onClick={() => controller.clearLogs()}
-            aria-label="Clear logs"
-            title="Clear log entries"
-          >
-            <Eraser className="size-3.5" aria-hidden />
-            Clear
-          </Button>
-        )}
-      </div>
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden px-4 py-3 sm:px-5">
+      <ConsoleTopBar
+        snapshot={snapshot}
+        msgCount={msgCount}
+        sidebarOpen={sidebarOpen}
+        topologyRailOpen={wide ? topologyRailOpen : railSheetOpen}
+        bookmarkCount={snapshot.bookmarks.length}
+        annotationsLicensed={annotationsLicensed}
+        triggersLicensed={triggersLicensed}
+        enabledTriggerCount={snapshot.triggers.filter((r) => r.enabled).length}
+        searchInput={searchInput}
+        onSearchInputChange={setSearchInput}
+        searchPulseKey={searchPulseKey}
+        onToggleSidebar={toggleSidebar}
+        onToggleTopologyRail={openTopologyRail}
+        onClearLogs={() => controller.clearLogs()}
+        onOpenTriggers={() => setTriggersOpen(true)}
+        onOpenBookmarks={openBookmarksTab}
+        onSelectTopId={filterById}
+      />
 
-      {/* Panes */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {wide ? panelsHorizontal : panelsVertical}
       </div>
 
-      {/* Command bar — only when connected */}
+      <TriggersDialog
+        open={triggersOpen}
+        onOpenChange={setTriggersOpen}
+        triggers={snapshot.triggers}
+        onSave={(next: typeof snapshot.triggers) => controller.saveTriggers(next)}
+        isLicensed={triggersLicensed}
+        disabledReason={
+          !triggersLicensed
+            ? undefined
+            : !snapshot.connected
+              ? 'Connect to a panel before editing triggers.'
+              : !snapshot.activeProfileName
+                ? 'Triggers persist per connection profile. Load a saved profile to keep rules across sessions.'
+                : undefined
+        }
+      />
+      <CommercialLicenseDialog
+        open={annotationsLockOpen}
+        onOpenChange={setAnnotationsLockOpen}
+        featureId="annotations"
+      />
+
       {snapshot.connected && (
         <CommandPane
           snapshot={snapshot}
@@ -186,31 +324,76 @@ export function ConsolePage() {
     </div>
   );
 
-  return (
-    <Group
-      orientation="horizontal"
-      id="lares4-shell"
-      className="flex min-h-0 flex-1 overflow-hidden"
-      defaultLayout={shellLayout}
-      onLayoutChanged={(layout) => {
-        try { window.localStorage.setItem('lares4.shellLayout', JSON.stringify(layout)); } catch { /* ignore */ }
-      }}
-    >
-      {sidebarOpen && (
-        <>
-          <Panel id="sidebar" defaultSize="18%" minSize="14%" maxSize="38%" className="min-w-0">
-            <div className="border-border/60 bg-pane/30 flex h-full min-w-0 flex-col overflow-hidden border-r">
-              <ConnectionSidebar />
-            </div>
-          </Panel>
-          {shellResizeHandle}
-        </>
-      )}
-      <Panel id="workspace" defaultSize="82%" minSize="40%" className="min-w-0">
-        {workspaceContent}
-      </Panel>
-    </Group>
+  const sheetRail = !wide && (
+    <Sheet open={railSheetOpen} onOpenChange={setRailSheetOpen}>
+      <SheetContent side="right" className="w-[88vw] max-w-sm gap-0 p-0">
+        <SheetTitle className="sr-only">Devices</SheetTitle>
+        <TopologyPane
+          topology={snapshot.topology}
+          onFilterById={filterById}
+          variant="rail"
+          onClose={() => setRailSheetOpen(false)}
+          onRunStateAll={runStateAll}
+          canRunStateAll={snapshot.connected}
+        />
+      </SheetContent>
+    </Sheet>
   );
+
+  return (
+    <>
+      <Group
+        orientation="horizontal"
+        id="lares4-shell"
+        className="flex min-h-0 flex-1 overflow-hidden"
+        defaultLayout={shellLayout}
+        onLayoutChanged={(layout) => {
+          try { window.localStorage.setItem('lares4.shellLayout', JSON.stringify(layout)); } catch { /* ignore */ }
+        }}
+      >
+        {sidebarOpen && (
+          <>
+            <Panel id="sidebar" defaultSize="18%" minSize="14%" maxSize="38%" className="min-w-0">
+              <div className="border-border/60 bg-pane/30 flex h-full min-w-0 flex-col overflow-hidden border-r">
+                <ConnectionSidebar />
+              </div>
+            </Panel>
+            {shellResizeHandle}
+          </>
+        )}
+        <Panel id="workspace" defaultSize="64%" minSize="40%" className="min-w-0">
+          {workspaceContent}
+        </Panel>
+        {wide && topologyRailOpen && (
+          <>
+            {shellResizeHandle}
+            <Panel id="rail" defaultSize="22%" minSize="16%" maxSize="34%" className="min-w-0">
+              <TopologyPane
+                topology={snapshot.topology}
+                onFilterById={filterById}
+                variant="rail"
+                onClose={closeTopologyRail}
+                onRunStateAll={runStateAll}
+                canRunStateAll={snapshot.connected}
+              />
+            </Panel>
+          </>
+        )}
+      </Group>
+      {sheetRail}
+    </>
+  );
+}
+
+function readRailOpen(): boolean {
+  try {
+    const raw = window.localStorage.getItem(TOPOLOGY_RAIL_KEY);
+    if (raw === null) return false;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed === true;
+  } catch {
+    return false;
+  }
 }
 
 function readShellLayout(): Record<string, number> | undefined {

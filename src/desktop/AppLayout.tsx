@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Radio, Terminal } from 'lucide-react';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { cn } from '@/lib/utils';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { AboutDialog } from './components/AboutDialog.js';
 import { ThemeToggle } from './components/theme-toggle.js';
 import { formatConnectionLabel } from './runtime/connection-label.js';
 import {
@@ -23,6 +26,7 @@ export function AppLayout() {
   const isConsole = location.pathname === '/console';
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // Auto-close sidebar when connected
   useEffect(() => {
@@ -30,6 +34,23 @@ export function AppLayout() {
       setSidebarOpen(false);
     }
   }, [snapshot.connectionStatus]);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void listen('menu://about', () => setAboutOpen(true))
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* not running under Tauri (e.g. plain vite) */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   const connClasses = connectionChipClasses(snapshot.connectionStatus);
   const replayClasses = replayChipClasses(snapshot.replayStatus);
@@ -41,6 +62,7 @@ export function AppLayout() {
   };
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="bg-background/80 flex h-dvh min-h-0 flex-col overflow-hidden backdrop-blur-[2px]">
       <a
         href="#main-content"
@@ -111,6 +133,8 @@ export function AppLayout() {
           <Outlet context={context} />
         )}
       </main>
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
     </div>
+    </TooltipProvider>
   );
 }
