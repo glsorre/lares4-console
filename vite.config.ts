@@ -19,6 +19,23 @@ const repoUrl =
     ? pkg.repository
     : (pkg.repository?.url ?? '');
 
+// Ed25519 public keys (32-byte hex) accepted by this build. The verifier
+// tries each in declared order — putting the current production key first
+// and any predecessor key second keeps already-issued tokens valid through
+// a rotation overlap window. Override at build time via the
+// LARES4_LICENSE_PUBKEY env var (comma-separated for multiple keys).
+//
+// fingerprint: 887772be
+const PRODUCTION_LICENSE_PUBKEYS: readonly string[] = [
+  '887772be1db8c3232aa315d5e9f37d198ea2c102b61d01410e4b7f7b785e8250',
+];
+const envPubkeys = (process.env.LARES4_LICENSE_PUBKEY ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0);
+const licensePubkeys: readonly string[] =
+  envPubkeys.length > 0 ? envPubkeys : PRODUCTION_LICENSE_PUBKEYS;
+
 export default defineConfig({
   plugins: [
     react(),
@@ -38,6 +55,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
     __APP_REPO__: JSON.stringify(repoUrl),
     __APP_AUTHOR__: JSON.stringify(pkg.author ?? ''),
+    __LICENSE_PUBKEYS__: JSON.stringify(licensePubkeys),
   },
   build: {
     outDir: 'dist-desktop',

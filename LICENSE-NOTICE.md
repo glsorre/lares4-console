@@ -41,3 +41,14 @@ to fund continued development.
 
 Each `src/pro/<subdir>/` ships its own `LICENSE` file containing the
 verbatim PolyForm Noncommercial License 1.0.0 text.
+
+## Commercial license keys
+
+Commercial keys for `src/pro/` features are Ed25519-signed offline tokens of
+the form `LARES4-<payload>.<signature>`. The desktop app verifies them locally
+against the public key baked in at build time (`LARES4_LICENSE_PUBKEY`); no
+network call is ever made and no telemetry is sent.
+
+A token binds a feature id (`macros`, `tabs`, `triggers`, `annotations`, or
+`*` for a full bundle), a subject (typically the licensee email), and an
+optional expiry. Tokens are issued out-of-band by the copyright holder.

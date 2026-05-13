@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { getPublicKeyAsync, signAsync } from '@noble/ed25519';
 
 interface MutableGlobal {
   window?: unknown;
@@ -8,6 +9,28 @@ interface MutableGlobal {
 const LEGACY_KEY = 'lares4.commercialLicense';
 const MACROS_KEY = 'lares4.license.macros';
 const TABS_KEY = 'lares4.license.tabs';
+const BUNDLE_KEY = 'lares4.license.bundle';
+
+const PRIV = new Uint8Array(32);
+const PUB_HEX_PROMISE = getPublicKeyAsync(PRIV).then((p) =>
+  Array.from(p, (b) => b.toString(16).padStart(2, '0')).join(''),
+);
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('base64').replace(/=+$/u, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+async function mintToken(feature: 'macros' | 'tabs' | 'triggers' | 'annotations' | '*'): Promise<string> {
+  const payload = {
+    v: 1,
+    f: feature,
+    sub: 'test@example.com',
+    iat: Math.floor(Date.now() / 1000),
+  };
+  const payloadEnc = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const sig = await signAsync(new TextEncoder().encode(payloadEnc), PRIV);
+  return `LARES4-${payloadEnc}.${base64UrlEncode(sig)}`;
+}
 
 function installStubStorage(): Map<string, string> {
   const mem = new Map<string, string>();
@@ -27,6 +50,14 @@ function clearStubStorage(): void {
   delete (globalThis as MutableGlobal).window;
 }
 
+async function loadFresh(): Promise<typeof import('../src/desktop/runtime/commercial-license-prefs.js')> {
+  process.env.LARES4_LICENSE_PUBKEY = await PUB_HEX_PROMISE;
+  const verify = await import('../src/desktop/runtime/license-verify.js');
+  verify.__clearVerifyCacheForTests();
+  const url = `../src/desktop/runtime/commercial-license-prefs.js?v=${Math.random()}`;
+  return import(url);
+}
+
 describe('commercial-license-prefs', () => {
   let mem: Map<string, string>;
 
@@ -38,108 +69,119 @@ describe('commercial-license-prefs', () => {
     clearStubStorage();
   });
 
-  describe('legacy macros API', () => {
-    it('returns null when no license is stored', async () => {
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      assert.equal(mod.getCommercialLicense(), null);
-      assert.equal(mod.isCommercialLicensed(), false);
+  describe('raw storage', () => {
+    it('round-trips a feature key (trimmed)', async () => {
+      const mod = await loadFresh();
+      mod.setFeatureLicense('macros', '  TOKEN  ');
+      assert.equal(mem.get(MACROS_KEY), 'TOKEN');
+      assert.equal(mod.getFeatureLicense('macros'), 'TOKEN');
     });
 
-    it('stores a trimmed key under the macros feature key', async () => {
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      mod.setCommercialLicense('  ABC-123  ');
-      assert.equal(mem.get(MACROS_KEY), 'ABC-123');
-      assert.equal(mem.has(LEGACY_KEY), false);
-      assert.equal(mod.getCommercialLicense(), 'ABC-123');
-      assert.equal(mod.isCommercialLicensed(), true);
-    });
-
-    it('clears the license when set to null or empty', async () => {
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      mod.setCommercialLicense('XYZ');
-      mod.setCommercialLicense(null);
+    it('clears the key when set to null or whitespace', async () => {
+      const mod = await loadFresh();
+      mod.setFeatureLicense('macros', 'TOKEN');
+      mod.setFeatureLicense('macros', null);
       assert.equal(mem.has(MACROS_KEY), false);
-      assert.equal(mod.isCommercialLicensed(), false);
-
-      mod.setCommercialLicense('ABC');
-      mod.setCommercialLicense('   ');
+      mod.setFeatureLicense('macros', '   ');
       assert.equal(mem.has(MACROS_KEY), false);
     });
   });
 
-  describe('per-feature API', () => {
-    it('tracks macros and tabs licenses independently', async () => {
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
+  describe('isFeatureLicensed gating', () => {
+    it('returns false for an unverified raw string', async () => {
+      const mod = await loadFresh();
+      mod.setFeatureLicense('macros', 'not-a-signed-token');
       assert.equal(mod.isFeatureLicensed('macros'), false);
-      assert.equal(mod.isFeatureLicensed('tabs'), false);
+    });
 
-      mod.setFeatureLicense('macros', 'MAC-1');
+    it('grants the feature after verifyAndSaveFeatureLicense succeeds', async () => {
+      const mod = await loadFresh();
+      const token = await mintToken('macros');
+      const result = await mod.verifyAndSaveFeatureLicense('macros', token);
+      assert.equal(result.ok, true);
       assert.equal(mod.isFeatureLicensed('macros'), true);
       assert.equal(mod.isFeatureLicensed('tabs'), false);
-      assert.equal(mem.get(MACROS_KEY), 'MAC-1');
+      assert.equal(mem.get(MACROS_KEY), token);
+    });
 
-      mod.setFeatureLicense('tabs', 'TAB-1');
-      assert.equal(mod.isFeatureLicensed('tabs'), true);
-      assert.equal(mem.get(TABS_KEY), 'TAB-1');
-      assert.equal(mem.get(MACROS_KEY), 'MAC-1');
-
-      mod.setFeatureLicense('macros', null);
+    it('rejects a wrong-feature token and does not persist it', async () => {
+      const mod = await loadFresh();
+      const token = await mintToken('tabs');
+      const result = await mod.verifyAndSaveFeatureLicense('macros', token);
+      assert.equal(result.ok, false);
       assert.equal(mod.isFeatureLicensed('macros'), false);
+      assert.equal(mem.has(MACROS_KEY), false);
+    });
+
+    it('stores a bundle token under the bundle key and unlocks every feature', async () => {
+      const mod = await loadFresh();
+      const token = await mintToken('*');
+      const result = await mod.verifyAndSaveFeatureLicense('macros', token);
+      assert.equal(result.ok, true);
+      assert.equal(mem.get(BUNDLE_KEY), token);
+      assert.equal(mem.has(MACROS_KEY), false);
+      for (const id of ['macros', 'tabs', 'triggers', 'annotations'] as const) {
+        assert.equal(mod.isFeatureLicensed(id), true, `bundle should unlock ${id}`);
+      }
+    });
+  });
+
+  describe('bootstrapLicenses', () => {
+    it('re-verifies stored tokens on app load', async () => {
+      const token = await mintToken('tabs');
+      const mod = await loadFresh();
+      // Simulate state already on disk from a prior session.
+      mem.set(TABS_KEY, token);
+      assert.equal(mod.isFeatureLicensed('tabs'), false);
+      await mod.bootstrapLicenses();
       assert.equal(mod.isFeatureLicensed('tabs'), true);
     });
 
-    it('trims keys and stores under the feature storageKey', async () => {
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      mod.setFeatureLicense('tabs', '  XYZ  ');
-      assert.equal(mem.get(TABS_KEY), 'XYZ');
-      assert.equal(mod.getFeatureLicense('tabs'), 'XYZ');
-    });
-
-    it('exposes descriptor metadata for the dialog', async () => {
-      const { FEATURES } = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      assert.equal(FEATURES.macros.storageKey, MACROS_KEY);
-      assert.equal(FEATURES.tabs.storageKey, TABS_KEY);
-      assert.ok(FEATURES.macros.title.length > 0);
-      assert.ok(FEATURES.tabs.description.length > 0);
+    it('does not grant features for tampered stored tokens', async () => {
+      const mod = await loadFresh();
+      mem.set(MACROS_KEY, 'LARES4-AAAA.BBBB');
+      await mod.bootstrapLicenses();
+      assert.equal(mod.isFeatureLicensed('macros'), false);
     });
   });
 
   describe('legacy macros key migration', () => {
-    it('reads legacy lares4.commercialLicense as fallback for macros', async () => {
-      mem.set(LEGACY_KEY, 'LEGACY-KEY');
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      assert.equal(mod.getFeatureLicense('macros'), 'LEGACY-KEY');
-      assert.equal(mod.isCommercialLicensed(), true);
+    it('reads legacy key as a fallback raw value for macros', async () => {
+      const mod = await loadFresh();
+      mem.set(LEGACY_KEY, 'LEGACY-RAW');
+      assert.equal(mod.getFeatureLicense('macros'), 'LEGACY-RAW');
     });
 
     it('does not surface the legacy key for tabs', async () => {
-      mem.set(LEGACY_KEY, 'LEGACY-KEY');
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
+      const mod = await loadFresh();
+      mem.set(LEGACY_KEY, 'LEGACY-RAW');
       assert.equal(mod.getFeatureLicense('tabs'), null);
-      assert.equal(mod.isFeatureLicensed('tabs'), false);
     });
 
-    it('migrates the legacy key out on first macros write', async () => {
-      mem.set(LEGACY_KEY, 'LEGACY-KEY');
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      mod.setFeatureLicense('macros', 'NEW-KEY');
+    it('clears the legacy key on the first macros write', async () => {
+      const mod = await loadFresh();
+      mem.set(LEGACY_KEY, 'LEGACY-RAW');
+      mod.setFeatureLicense('macros', 'NEW-RAW');
       assert.equal(mem.has(LEGACY_KEY), false);
-      assert.equal(mem.get(MACROS_KEY), 'NEW-KEY');
+      assert.equal(mem.get(MACROS_KEY), 'NEW-RAW');
     });
 
     it('clears legacy key when macros license is cleared', async () => {
-      mem.set(LEGACY_KEY, 'LEGACY-KEY');
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
+      const mod = await loadFresh();
+      mem.set(LEGACY_KEY, 'LEGACY-RAW');
       mod.setFeatureLicense('macros', null);
       assert.equal(mem.has(LEGACY_KEY), false);
       assert.equal(mem.has(MACROS_KEY), false);
     });
+  });
 
-    it('prefers a present new key over the legacy fallback', async () => {
-      mem.set(LEGACY_KEY, 'LEGACY-KEY');
-      mem.set(MACROS_KEY, 'NEW-KEY');
-      const mod = await import('../src/desktop/runtime/commercial-license-prefs.js');
-      assert.equal(mod.getFeatureLicense('macros'), 'NEW-KEY');
+  describe('descriptors', () => {
+    it('exposes feature descriptors with storage keys and copy', async () => {
+      const { FEATURES } = await loadFresh();
+      assert.equal(FEATURES.macros.storageKey, MACROS_KEY);
+      assert.equal(FEATURES.tabs.storageKey, TABS_KEY);
+      assert.ok(FEATURES.macros.title.length > 0);
+      assert.ok(FEATURES.tabs.description.length > 0);
     });
   });
 });

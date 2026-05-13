@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "lares4-console",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "me.rightright.lares4console",
   "build": {
     "frontendDist": "../dist-desktop",
     "devUrl": "http://localhost:1420",

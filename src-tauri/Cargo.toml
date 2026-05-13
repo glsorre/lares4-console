@@ -1,10 +1,10 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Desktop debug console for Lares4 panels"
+authors = ["Giuseppe Lucio Sorrentino"]
+license = "SEE LICENSE IN LICENSE-NOTICE.md"
+repository = "https://github.com/glsorre/lares4-console"
 edition = "2021"
 rust-version = "1.77.2"
 
