@@ -9,7 +9,7 @@ import { LogDetailPane } from '../components/LogDetailPane.js';
 import { LogsListPane } from '../components/LogsListPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
 import { formatReplayLabel } from '../runtime/status-chips.js';
-import { useSessionController } from '../runtime/session-controller-context.js';
+import { useSessionController } from '@pro/tabs/context.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
 
 export function ConsolePage() {

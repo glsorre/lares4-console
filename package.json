@@ -21,8 +21,8 @@
     "tauri:build": "tauri build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "test": "tsx --test tests/*.test.ts",
-    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts",
+    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts",
     "test:ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
@@ -57,5 +57,5 @@
     "vite": "^6.4.2",
     "vite-plugin-node-polyfills": "^0.26.0"
   },
-  "license": "ISC"
+  "license": "SEE LICENSE IN LICENSE-NOTICE.md"
 }

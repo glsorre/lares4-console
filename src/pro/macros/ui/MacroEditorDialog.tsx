@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// See LICENSE in src/pro/macros.
+
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import {
@@ -11,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { Macro, MacroStep } from '../../core/macros.js';
+import type { Macro, MacroStep } from '../types.js';
 
 interface MacroEditorDialogProps {
   open: boolean;

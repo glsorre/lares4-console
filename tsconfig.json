@@ -14,7 +14,9 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@pro/macros/*": ["./src/pro/macros/*"],
+      "@pro/tabs/*": ["./src/pro/tabs/*"]
     }
   },
   "include": ["src", "tests"]

@@ -135,15 +135,15 @@ export function LogsListPane({
 
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
-      <div className="border-border/60 flex h-[46px] shrink-0 items-center gap-2 border-b px-4">
+      <div className="border-border/60 flex min-h-[46px] shrink-0 items-center gap-2 border-b px-4 py-1.5">
         <span className="text-sm font-medium shrink-0">Live log</span>
         {totalAll > 0 && (
           <span className="text-muted-foreground font-mono text-xs tabular-nums shrink-0">
             {totalShown}{totalShown !== totalAll ? `/${totalAll}` : ''}
           </span>
         )}
-        <div className="min-w-0 flex-1 overflow-x-auto">
-          <div className="flex items-center gap-1 whitespace-nowrap">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
             <button
               type="button"
               className={cn(

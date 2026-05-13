@@ -1,5 +1,7 @@
 import type { LogEntry, LogTag } from './types.js';
 
+const MERGEABLE_TAGS: ReadonlySet<LogTag> = new Set(['CHANGE', 'BULK', 'RAW_RX', 'ACK']);
+
 export interface LogViewport {
   start: number;
   end: number;
@@ -224,7 +226,15 @@ export function buildMessageListItems(
   const merged: MessageListItem[] = [];
   for (const item of items) {
     const tail = merged[merged.length - 1];
-    if (tail && tail.tag === item.tag && tail.preview === item.preview && !tail.collapsed && !item.collapsed) {
+    const canMerge =
+      tail !== undefined
+      && tail.tag === item.tag
+      && MERGEABLE_TAGS.has(item.tag)
+      && MERGEABLE_TAGS.has(tail.tag)
+      && tail.preview === item.preview
+      && !tail.collapsed
+      && !item.collapsed;
+    if (canMerge && tail) {
       tail.repeat = (tail.repeat ?? 1) + 1;
       tail.ts = item.ts;
       tail.id = item.id;

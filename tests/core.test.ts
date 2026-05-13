@@ -317,6 +317,42 @@ describe('render helpers', () => {
     assert.equal(expanded[0]?.collapsed, false);
     assert.equal(expanded[0]?.content, 'line1\nline2');
   });
+
+  it('does not merge consecutive LOG entries with identical previews', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'LOG', message: 'state lights output', groupId: 'cmd-A' },
+      { ts: new Date(2000).toISOString(), level: 'info', tag: 'LOG', message: 'state lights output', groupId: 'cmd-B' },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 2);
+    assert.equal(items[0]?.repeat, 1);
+    assert.equal(items[1]?.repeat, 1);
+    assert.equal(items[0]?.id, 'cmd-A');
+    assert.equal(items[1]?.id, 'cmd-B');
+  });
+
+  it('does not merge consecutive ERROR or SYSTEM rows with identical previews', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'error', tag: 'ERROR', message: 'boom', groupId: 'e-1' },
+      { ts: new Date(1001).toISOString(), level: 'error', tag: 'ERROR', message: 'boom', groupId: 'e-2' },
+      { ts: new Date(1002).toISOString(), level: 'info', tag: 'SYSTEM', message: 'sys', groupId: 's-1' },
+      { ts: new Date(1003).toISOString(), level: 'info', tag: 'SYSTEM', message: 'sys', groupId: 's-2' },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 4);
+    assert.ok(items.every((it) => it.repeat === 1));
+  });
+
+  it('still merges consecutive CHANGE entries with identical previews', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g-c1' },
+      { ts: new Date(1100).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g-c2' },
+      { ts: new Date(1200).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g-c3' },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.repeat, 3);
+  });
 });
 
 describe('command router', () => {

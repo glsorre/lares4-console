@@ -247,6 +247,7 @@ describe('SessionController', () => {
     const c = new SessionController({
       createClient: async () => ({ lares: lares as never, socket }),
       profiles: repo,
+      isMacrosLicensed: () => true,
     });
     await c.connect({ ip: '1', pin: '2', sender: 's', wss: true, profileName: 'h' });
     assert.equal(c.snapshot().macros.length, 1);
@@ -262,6 +263,7 @@ describe('SessionController', () => {
     const { lares, socket } = stubLaresAndSocket();
     const c = new SessionController({
       createClient: async () => ({ lares: lares as never, socket }),
+      isMacrosLicensed: () => true,
     });
     await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
     c.startRecordingMacro();
@@ -273,6 +275,56 @@ describe('SessionController', () => {
     assert.equal(macro?.steps.length, 2);
     assert.equal(macro?.steps[0]?.command, 'help');
     assert.equal(c.snapshot().recordingMacro, false);
+  });
+
+  it('saveMacro rejects when macros are unlicensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isMacrosLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await assert.rejects(
+      () => c.saveMacro({ name: 'x', steps: [{ command: 'help' }] }),
+      /Macros require a commercial license/,
+    );
+    assert.equal(c.snapshot().macros.length, 0);
+  });
+
+  it('runMacro throws and does not start playback when unlicensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isMacrosLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    assert.throws(() => c.runMacro('any-id'), /Macros require a commercial license/);
+    assert.equal(c.snapshot().activeMacro, undefined);
+  });
+
+  it('startRecordingMacro throws and submit does not buffer steps when unlicensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isMacrosLicensed: () => false,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    assert.throws(() => c.startRecordingMacro(), /Macros require a commercial license/);
+    assert.equal(c.snapshot().recordingMacro, false);
+    await c.submit('help');
+    assert.equal(c.snapshot().recordingMacroSteps, 0);
+  });
+
+  it('saveMacro works when macros are licensed', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+      isMacrosLicensed: () => true,
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    const macro = await c.saveMacro({ name: 'ok', steps: [{ command: 'help' }] });
+    assert.equal(macro.name, 'ok');
+    assert.equal(c.snapshot().macros.length, 1);
   });
 
   it('onSocketSend falls back to raw text for non-JSON frames', async () => {

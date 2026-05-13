@@ -1,4 +1,7 @@
-import { DEFAULT_STEP_DELAY_MS, type Macro, type MacroStep } from './macros.js';
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// See LICENSE in this directory.
+
+import { DEFAULT_STEP_DELAY_MS, type Macro, type MacroStep } from './types.js';
 
 export type MacroSubmitFn = (line: string) => Promise<void> | void;
 export type MacroMode = 'stopped' | 'playing' | 'paused';

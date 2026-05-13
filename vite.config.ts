@@ -28,6 +28,8 @@ export default defineConfig({
   clearScreen: false,
   resolve: {
     alias: {
+      '@pro/macros': path.resolve(dirname, './src/pro/macros'),
+      '@pro/tabs': path.resolve(dirname, './src/pro/tabs'),
       '@': path.resolve(dirname, './src'),
       ws: path.resolve(dirname, './src/infra/ws-browser-shim.ts'),
     },

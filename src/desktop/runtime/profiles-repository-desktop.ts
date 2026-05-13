@@ -1,6 +1,6 @@
 import { readProfilesFile, writeProfilesFile } from './tauri-fs.js';
 import type { LogTag } from '../../core/types.js';
-import type { Macro, MacroStep } from '../../core/macros.js';
+import type { Macro, MacroStep } from '@pro/macros/types.js';
 
 export interface ProfilesPersistence {
   read: () => Promise<string | null>;

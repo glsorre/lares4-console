@@ -10,8 +10,9 @@ import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
 import { readUtf8File, resolveDefaultSessionPath, writeUtf8File } from './tauri-fs.js';
 import type { ReplayEvent } from '../../core/replay-engine.js';
 import { ReplayEngine } from '../../core/replay-engine.js';
-import type { Macro, MacroStep } from '../../core/macros.js';
-import { MacroEngine } from '../../core/macro-engine.js';
+import type { Macro, MacroStep } from '@pro/macros/types.js';
+import { MacroEngine } from '@pro/macros/engine.js';
+import { isFeatureLicensed } from './commercial-license-prefs.js';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
@@ -55,6 +56,7 @@ export type CreateLaresClientFn = (
 export interface SessionControllerDeps {
   createClient?: CreateLaresClientFn;
   profiles?: DesktopProfilesRepository;
+  isMacrosLicensed?: () => boolean;
 }
 
 function generateId(): string {
@@ -112,10 +114,12 @@ export class SessionController {
   private macroRecordingBuffer: MacroStep[] | undefined;
   private macroRecordingPrevAtMs = 0;
   private submittingFromMacro = false;
+  private readonly isMacrosLicensed: () => boolean;
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
     this.profiles = deps.profiles ?? new DesktopProfilesRepository();
+    this.isMacrosLicensed = deps.isMacrosLicensed ?? (() => isFeatureLicensed('macros'));
     this.replayEngine = new ReplayEngine(
       (entry) => {
         this.store.push(entry);
@@ -252,7 +256,14 @@ export class SessionController {
     return this.macros;
   }
 
+  private requireMacrosLicense(): void {
+    if (!this.isMacrosLicensed()) {
+      throw new Error('Macros require a commercial license.');
+    }
+  }
+
   async saveMacro(input: { id?: string; name: string; description?: string; steps: MacroStep[] }): Promise<Macro> {
+    this.requireMacrosLicense();
     const ts = nowIso();
     const existingIdx = input.id ? this.macros.findIndex((m) => m.id === input.id) : -1;
     const existing = existingIdx >= 0 ? this.macros[existingIdx] : undefined;
@@ -273,6 +284,7 @@ export class SessionController {
   }
 
   async removeMacro(id: string): Promise<void> {
+    this.requireMacrosLicense();
     const next = this.macros.filter((m) => m.id !== id);
     if (next.length === this.macros.length) return;
     this.macros = next;
@@ -281,24 +293,27 @@ export class SessionController {
   }
 
   runMacro(id: string): void {
+    this.requireMacrosLicense();
     const macro = this.macros.find((m) => m.id === id);
     if (!macro) return;
     this.macroEngine.load(macro);
     this.macroEngine.play();
   }
 
-  pauseMacro(): void { this.macroEngine.pause(); }
-  resumeMacro(): void { this.macroEngine.play(); }
-  stopMacro(): void { this.macroEngine.stop(); }
-  stepMacro(): void { this.macroEngine.step(); }
+  pauseMacro(): void { this.requireMacrosLicense(); this.macroEngine.pause(); }
+  resumeMacro(): void { this.requireMacrosLicense(); this.macroEngine.play(); }
+  stopMacro(): void { this.requireMacrosLicense(); this.macroEngine.stop(); }
+  stepMacro(): void { this.requireMacrosLicense(); this.macroEngine.step(); }
 
   startRecordingMacro(): void {
+    this.requireMacrosLicense();
     this.macroRecordingBuffer = [];
     this.macroRecordingPrevAtMs = Date.now();
     this.emit();
   }
 
   async stopRecordingMacro(name: string, description?: string): Promise<Macro | undefined> {
+    this.requireMacrosLicense();
     const steps = this.macroRecordingBuffer;
     this.macroRecordingBuffer = undefined;
     this.emit();
@@ -312,6 +327,7 @@ export class SessionController {
   }
 
   private maybeRecordMacroStep(line: string): void {
+    if (!this.isMacrosLicensed()) return;
     if (this.submittingFromMacro) return;
     if (!this.macroRecordingBuffer) return;
     const trimmed = line.trim();

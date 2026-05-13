@@ -9,7 +9,8 @@ import {
   formatReplayLabel,
   replayChipClasses,
 } from './runtime/status-chips.js';
-import { useSessionController } from './runtime/session-controller-context.js';
+import { useSessionController } from '@pro/tabs/context.js';
+import { TabsStrip } from '@pro/tabs/ui/TabsStrip.js';
 
 export type LayoutOutletContext = {
   sidebarOpen: boolean;
@@ -91,6 +92,8 @@ export function AppLayout() {
           <ThemeToggle />
         </div>
       </header>
+
+      <TabsStrip />
 
       <main
         id="main-content"

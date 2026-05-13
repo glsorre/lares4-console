@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Cable,
@@ -38,9 +38,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import type { ConnectionProfile } from '../runtime/profiles-repository-desktop.js';
-import { useSessionController } from '../runtime/session-controller-context.js';
-import type { Macro } from '../../core/macros.js';
-import { MacroEditorDialog } from './MacroEditorDialog.js';
+import { useSessionController } from '@pro/tabs/context.js';
+import type { Macro } from '@pro/macros/types.js';
+import { MacroEditorDialog } from '@pro/macros/ui/MacroEditorDialog.js';
+import { isFeatureLicensed } from '../runtime/commercial-license-prefs.js';
+import { ProFeatureLock } from './ProFeatureLock.js';
 
 type View = 'list' | 'form';
 
@@ -73,6 +75,8 @@ export function ConnectionSidebar() {
   const [deleteMacroId, setDeleteMacroId] = useState<string | null>(null);
   const [recordingName, setRecordingName] = useState('');
   const [recordingNameOpen, setRecordingNameOpen] = useState(false);
+  const [licenseTick, setLicenseTick] = useState(0);
+  const licensed = useMemo(() => isFeatureLicensed('macros'), [licenseTick]);
 
   const refreshProfiles = useCallback(async () => {
     const data = await controller.listProfiles();
@@ -359,6 +363,8 @@ export function ConnectionSidebar() {
               activeMacro={snapshot.activeMacro}
               recording={snapshot.recordingMacro}
               recordingSteps={snapshot.recordingMacroSteps}
+              licensed={licensed}
+              onLicenseChanged={() => setLicenseTick((n) => n + 1)}
               onNew={() => { setEditingMacro(undefined); setMacroEditorOpen(true); }}
               onEdit={(m) => { setEditingMacro(m); setMacroEditorOpen(true); }}
               onRun={(m) => controller.runMacro(m.id)}
@@ -626,6 +632,8 @@ interface MacrosSectionProps {
   activeMacro?: { name: string; position: number; total: number; status: 'stopped' | 'playing' | 'paused' };
   recording: boolean;
   recordingSteps: number;
+  licensed: boolean;
+  onLicenseChanged: () => void;
   onNew: () => void;
   onEdit: (m: Macro) => void;
   onRun: (m: Macro) => void;
@@ -641,9 +649,22 @@ interface MacrosSectionProps {
 function MacrosSection(props: MacrosSectionProps) {
   const {
     open, setOpen, macros, activeMacro, recording, recordingSteps,
+    licensed, onLicenseChanged,
     onNew, onEdit, onRun, onPause, onResume, onStop, onDelete,
     onStartRecording, onStopRecording, onCancelRecording,
   } = props;
+  if (!licensed) {
+    return (
+      <div className="mt-4 border-t border-border/60 pt-3">
+        <ProFeatureLock
+          featureId="macros"
+          label="Macros"
+          variant="row"
+          onLicenseChanged={onLicenseChanged}
+        />
+      </div>
+    );
+  }
   return (
     <div className="mt-4 border-t border-border/60 pt-3">
       <button
@@ -656,6 +677,13 @@ function MacrosSection(props: MacrosSectionProps) {
           {open ? <ChevronDown className="size-3" aria-hidden /> : <ChevronRight className="size-3" aria-hidden />}
           Macros
           <span className="text-muted-foreground font-normal">· {macros.length}</span>
+          <Badge
+            variant="secondary"
+            className="h-3.5 px-1 text-[0.55rem]"
+            title="Commercial license active"
+          >
+            Commercial
+          </Badge>
         </span>
         <span className="flex items-center gap-1">
           <Button

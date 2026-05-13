@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// See LICENSE in this directory.
+
 export interface MacroStep {
   command: string;
   delayMs?: number;

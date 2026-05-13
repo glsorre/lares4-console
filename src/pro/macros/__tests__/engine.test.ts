@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// See LICENSE in src/pro/macros.
+
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MacroEngine } from '../src/core/macro-engine.js';
-import type { Macro } from '../src/core/macros.js';
+import { MacroEngine } from '../engine.js';
+import type { Macro } from '../types.js';
 
 function makeMacro(steps: { command: string; delayMs?: number }[]): Macro {
   return {

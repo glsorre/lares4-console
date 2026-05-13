@@ -134,12 +134,9 @@ export function CommandPane({
                     return;
                   }
                   if (event.key === 'Enter') {
-                    if (open && activeIndex >= 0) {
-                      event.preventDefault();
-                      apply(activeIndex);
-                    } else {
-                      onSubmit();
-                    }
+                    onSubmit();
+                    setDismissed(true);
+                    return;
                   }
                 }}
               />
@@ -167,7 +164,6 @@ export function CommandPane({
                   role="option"
                   aria-selected={i === activeIndex}
                   onMouseDown={(event) => { event.preventDefault(); apply(i); }}
-                  onMouseEnter={() => setActiveIndex(i)}
                   className={cn(
                     'flex w-full items-center justify-between px-3 py-1.5 text-left font-mono text-xs transition-colors',
                     'hover:bg-accent/40',
