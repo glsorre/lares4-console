@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { getTagClasses } from '@/desktop/runtime/log-tag-classes.js';
+import { LogTagChip } from '@/desktop/components/LogTagChip.js';
 import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
 import { useSessionController } from '@pro/tabs/context.js';
@@ -116,14 +116,7 @@ export function BookmarksPane({
                         className="flex w-full min-w-0 items-center gap-2 text-left"
                         onClick={() => onSelect(bookmark.groupId)}
                       >
-                        {item && (
-                          <span className={cn(
-                            'shrink-0 rounded px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold uppercase',
-                            getTagClasses(item.tag),
-                          )}>
-                            {item.tag}
-                          </span>
-                        )}
+                        {item && <LogTagChip tag={item.tag} />}
                         <span className="text-muted-foreground font-mono text-[0.65rem] tabular-nums shrink-0">
                           {item ? formatLogClock(item.ts) : '—'}
                         </span>

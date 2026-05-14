@@ -19,6 +19,7 @@ export function NewWindowButton() {
         featureId="multiwindow"
         label="New window"
         variant="inline"
+        leadingIcon={SquarePlus}
       />
     );
   }

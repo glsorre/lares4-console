@@ -21,7 +21,7 @@ export function PaneEmpty({ icon: Icon, title, description, cta, className }: Pa
         <Icon className="size-4" aria-hidden />
       </div>
       <div className="space-y-1.5">
-        <p className="text-foreground text-sm font-semibold tracking-tight">{title}</p>
+        <p className="font-heading text-foreground text-sm font-semibold tracking-tight">{title}</p>
         <p className="text-muted-foreground mx-auto max-w-[18rem] text-xs leading-relaxed">{description}</p>
       </div>
       {cta && (

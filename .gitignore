@@ -8,3 +8,4 @@ coverage/
 src-tauri/target
 .cursor
 src/desktop/runtime/acknowledgements.generated.ts
+.DS_Store

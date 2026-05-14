@@ -127,7 +127,7 @@ export function CommandPane({
             }}
           />
           {outputNonDefault && (
-            <span className="bg-muted/40 text-muted-foreground border-border/50 flex shrink-0 items-center border-l px-2 font-mono text-[0.65rem] uppercase tracking-wide">
+            <span className="bg-muted/40 text-muted-foreground border-border/50 flex shrink-0 items-center border-l px-2 font-mono text-xs uppercase tracking-wide">
               {snapshot.outputFormat}
             </span>
           )}

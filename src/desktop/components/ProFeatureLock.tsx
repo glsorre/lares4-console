@@ -1,21 +1,29 @@
 import { useState } from 'react';
+import type { ComponentType, SVGProps } from 'react';
 import { Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CommercialLicenseDialog } from './CommercialLicenseDialog';
+import { FeatureGateEmptyState } from './FeatureGateEmptyState';
 import type { FeatureId } from '../runtime/commercial-license-prefs';
 
 const DEFAULT_TOOLTIP = 'Pro feature — click to unlock';
 
+type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
+
 interface ProFeatureLockProps {
   featureId: FeatureId;
   label: string;
-  variant?: 'inline' | 'row' | 'icon';
+  variant?: 'inline' | 'row' | 'icon' | 'pane';
   className?: string;
   /** Override tooltip text (icon variant especially benefits from a more specific hint). */
   tooltip?: string;
   /** When true, render the visuals only — no <button>. Use inside an already-clickable parent (e.g. TabsTrigger). */
   asDecoration?: boolean;
+  /** Long-form pitch shown in the `pane` variant. */
+  paneDescription?: string;
+  /** Optional leading action icon (e.g. Plus for "New tab"). When set, Lock moves to the trailing slot. */
+  leadingIcon?: IconComp;
   onLicenseChanged?: () => void;
 }
 
@@ -37,22 +45,49 @@ export function ProFeatureLock({
   className,
   tooltip,
   asDecoration = false,
+  paneDescription,
+  leadingIcon: LeadingIcon,
   onLicenseChanged,
 }: ProFeatureLockProps) {
   const [open, setOpen] = useState(false);
   const tooltipText = tooltip ?? DEFAULT_TOOLTIP;
   const ariaLabel = `${label} — ${tooltipText}`;
 
+  if (variant === 'pane') {
+    return (
+      <>
+        <FeatureGateEmptyState
+          featureId={featureId}
+          title={label}
+          description={paneDescription ?? tooltipText}
+          onUnlock={() => setOpen(true)}
+          className={className}
+        />
+        <CommercialLicenseDialog
+          open={open}
+          onOpenChange={setOpen}
+          featureId={featureId}
+          onChanged={onLicenseChanged}
+        />
+      </>
+    );
+  }
+
   const isIcon = variant === 'icon';
 
-  const content = (
-    <>
-      <span className={cn('flex min-w-0 items-center gap-1.5', isIcon && 'gap-0')}>
-        <Lock className="size-3 shrink-0" aria-hidden />
-        {!isIcon && <span className="truncate">{label}</span>}
-      </span>
-      {!isIcon && <span className="text-primary text-[0.65rem] font-medium">Unlock</span>}
-    </>
+  const content = isIcon ? (
+    <Lock className="size-3 shrink-0" aria-hidden />
+  ) : LeadingIcon ? (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <LeadingIcon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{label}</span>
+      <Lock className="ml-1 size-3 shrink-0 opacity-60" aria-hidden />
+    </span>
+  ) : (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <Lock className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">{label}</span>
+    </span>
   );
 
   const sharedClass = cn(baseClasses, sizingByVariant[variant], !asDecoration && interactive, className);

@@ -2,16 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Bell, Bookmark as BookmarkIcon, FileSearch, Zap } from 'lucide-react';
+import { Bell, Bookmark as BookmarkIcon, FileSearch, Lock, PanelRightClose, Search, Zap } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { BookmarksPane } from '@pro/annotations/ui/BookmarksPane.js';
 import { CommandPane } from '../components/CommandPane.js';
 import { CommercialLicenseDialog } from '../components/CommercialLicenseDialog.js';
 import { ConnectionSidebar } from '../components/ConnectionSidebar.js';
 import { ConsoleTopBar } from '../components/ConsoleTopBar.js';
+import { FeatureGateEmptyState } from '../components/FeatureGateEmptyState.js';
 import { LogDetailPane } from '../components/LogDetailPane.js';
 import { LogsListPane } from '../components/LogsListPane.js';
+import { RecentActivityPane, collectRecentDeviceIds } from '../components/RecentActivityPane.js';
 import { TopologyPane } from '../components/TopologyPane.js';
 import { TriggersPane } from '@pro/triggers/ui/TriggersPane.js';
 import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
@@ -60,6 +65,7 @@ export function ConsolePage() {
   const [topologyRailOpen, setTopologyRailOpen] = useState<boolean>(readRailOpen);
   const [railSheetOpen, setRailSheetOpen] = useState(false);
   const [searchPulseKey, setSearchPulseKey] = useState(0);
+  const [topologyFilter, setTopologyFilter] = useState('');
 
   const migratedProfilesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -189,11 +195,6 @@ export function ConsolePage() {
   ]);
 
   function handleTabChange(value: string) {
-    const tab = detailTabs.find((t) => t.value === value);
-    if (tab?.lockFeature) {
-      setLockFeature(tab.lockFeature);
-      return;
-    }
     setDetailTab(value as DetailTab);
   }
 
@@ -215,12 +216,11 @@ export function ConsolePage() {
             >
               <Icon className="size-3.5" aria-hidden />
               <span>{tab.label}</span>
-              {tab.lockFeature && (
-                <span className="text-primary text-[0.65rem] font-medium">Unlock</span>
-              )}
-              {tab.badge !== undefined && (
+              {tab.lockFeature ? (
+                <Lock className="text-muted-foreground size-3" aria-hidden />
+              ) : tab.badge !== undefined ? (
                 <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">{tab.badge}</span>
-              )}
+              ) : null}
             </TabsTrigger>
           );
         })}
@@ -234,35 +234,60 @@ export function ConsolePage() {
         />
       </TabsContent>
       <TabsContent value="bookmarks" className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <BookmarksPane
-          bookmarks={snapshot.bookmarks}
-          entries={snapshot.logEntries}
-          selectedId={selectedId}
-          onSelect={selectFromBookmarks}
-          onRemove={(groupId: string) => controller.toggleBookmark(groupId)}
-          onUpdateNote={(groupId: string, note: string | undefined) => controller.setBookmarkNote(groupId, note)}
-          onExport={() => controller.exportBookmarks()}
-          isLicensed={annotationsLicensed}
-        />
+        {annotationsLicensed ? (
+          <BookmarksPane
+            bookmarks={snapshot.bookmarks}
+            entries={snapshot.logEntries}
+            selectedId={selectedId}
+            onSelect={selectFromBookmarks}
+            onRemove={(groupId: string) => controller.toggleBookmark(groupId)}
+            onUpdateNote={(groupId: string, note: string | undefined) => controller.setBookmarkNote(groupId, note)}
+            onExport={() => controller.exportBookmarks()}
+            isLicensed={annotationsLicensed}
+          />
+        ) : (
+          <FeatureGateEmptyState
+            featureId="annotations"
+            title="Bookmarks are a Pro feature"
+            description="Annotate, pin, and export sessions across reconnects."
+            onUnlock={() => setLockFeature('annotations')}
+          />
+        )}
       </TabsContent>
       <TabsContent value="triggers" className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <TriggersPane
-          triggers={snapshot.triggers}
-          onSave={(next) => controller.saveTriggers(next)}
-          isLicensed={triggersLicensed}
-          disabledReason={
-            !triggersLicensed
-              ? undefined
-              : !snapshot.connected
+        {triggersLicensed ? (
+          <TriggersPane
+            triggers={snapshot.triggers}
+            onSave={(next) => controller.saveTriggers(next)}
+            isLicensed={triggersLicensed}
+            disabledReason={
+              !snapshot.connected
                 ? 'Connect to a panel before editing triggers.'
                 : !snapshot.activeProfileName
                   ? 'Triggers persist per connection profile. Load a saved profile to keep rules across sessions.'
                   : undefined
-          }
-        />
+            }
+          />
+        ) : (
+          <FeatureGateEmptyState
+            featureId="triggers"
+            title="Triggers are a Pro feature"
+            description="Run rules when log lines match. Highlight, mute, alert."
+            onUnlock={() => setLockFeature('triggers')}
+          />
+        )}
       </TabsContent>
       <TabsContent value="macros" className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <MacrosPane isLicensed={macrosLicensed} />
+        {macrosLicensed ? (
+          <MacrosPane isLicensed={macrosLicensed} />
+        ) : (
+          <FeatureGateEmptyState
+            featureId="macros"
+            title="Macros are a Pro feature"
+            description="Bundle commands into one-shot shortcuts."
+            onUnlock={() => setLockFeature('macros')}
+          />
+        )}
       </TabsContent>
     </Tabs>
   );
@@ -394,18 +419,67 @@ export function ConsolePage() {
     </div>
   );
 
+  const recentDeviceIds = useMemo(
+    () => collectRecentDeviceIds(snapshot.logEntries, snapshot.topology),
+    [snapshot.logEntries, snapshot.topology],
+  );
+
+  const activitySidebar = (
+    <div className="bg-pane/30 border-border/60 flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l">
+      <div className="border-border/60 flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+        <div className="relative flex min-w-0 flex-1 items-center">
+          <Search className="text-muted-foreground pointer-events-none absolute left-2 size-3.5" aria-hidden />
+          <Input
+            type="search"
+            placeholder="Filter id, label, state"
+            value={topologyFilter}
+            onChange={(event) => setTopologyFilter(event.target.value)}
+            spellCheck={false}
+            className="h-7 pl-7 font-mono text-xs"
+            aria-label="Filter topology"
+          />
+        </div>
+        {wide && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground h-7 w-7 shrink-0 p-0"
+                onClick={closeTopologyRail}
+                aria-label="Hide devices rail"
+              >
+                <PanelRightClose className="size-4" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Hide rail</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+      <RecentActivityPane
+        entries={snapshot.logEntries}
+        topology={snapshot.topology}
+        onFilterById={filterById}
+      />
+      <TopologyPane
+        topology={snapshot.topology}
+        onFilterById={filterById}
+        variant="compact"
+        onRunStateAll={runStateAll}
+        canRunStateAll={snapshot.connected}
+        recentDeviceIds={recentDeviceIds}
+        filter={topologyFilter}
+        onFilterChange={setTopologyFilter}
+      />
+    </div>
+  );
+
   const sheetRail = !wide && (
     <Sheet open={railSheetOpen} onOpenChange={setRailSheetOpen}>
       <SheetContent side="right" className="w-[88vw] max-w-sm gap-0 p-0">
         <SheetTitle className="sr-only">Devices</SheetTitle>
-        <TopologyPane
-          topology={snapshot.topology}
-          onFilterById={filterById}
-          variant="rail"
-          onClose={() => setRailSheetOpen(false)}
-          onRunStateAll={runStateAll}
-          canRunStateAll={snapshot.connected}
-        />
+        {activitySidebar}
       </SheetContent>
     </Sheet>
   );
@@ -438,14 +512,7 @@ export function ConsolePage() {
           <>
             {shellResizeHandle}
             <Panel id="rail" defaultSize="22%" minSize="16%" maxSize="34%" className="min-w-0">
-              <TopologyPane
-                topology={snapshot.topology}
-                onFilterById={filterById}
-                variant="rail"
-                onClose={closeTopologyRail}
-                onRunStateAll={runStateAll}
-                canRunStateAll={snapshot.connected}
-              />
+              {activitySidebar}
             </Panel>
           </>
         )}

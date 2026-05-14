@@ -302,7 +302,7 @@ export function ConnectionSidebar() {
             <div className="border-emerald-500/40 ring-emerald-500/20 rounded-lg border bg-card p-2.5 shadow-sm ring-1">
               <div className="mb-2 flex items-center gap-1">
                 <span className="text-foreground truncate text-xs font-semibold leading-tight">{orphanActiveName}</span>
-                <Badge className="h-3.5 bg-emerald-100 px-1 text-[0.55rem] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                <Badge className="h-3.5 bg-emerald-100 px-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                   Connected
                 </Badge>
               </div>
@@ -342,12 +342,12 @@ export function ConnectionSidebar() {
                               {p.name}
                             </span>
                             {isActiveProfile && (
-                              <Badge className="h-3.5 bg-emerald-100 px-1 text-[0.55rem] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              <Badge className="h-3.5 bg-emerald-100 px-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                                 Connected
                               </Badge>
                             )}
                           </div>
-                          <p className="text-muted-foreground font-mono text-[0.65rem]">{p.ip}</p>
+                          <p className="text-muted-foreground font-mono text-xs">{p.ip}</p>
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

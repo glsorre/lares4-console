@@ -28,7 +28,7 @@
     "test:ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
-    "@fontsource-variable/geist": "^5.2.8",
+    "@fontsource-variable/quicksand": "^5.2.8",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-process": "^2.3.0",

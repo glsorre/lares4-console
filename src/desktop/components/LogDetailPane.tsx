@@ -13,7 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { getTagClasses } from '../runtime/log-tag-classes.js';
+import { LogTagChip } from './LogTagChip.js';
 
 type ViewMode = 'decoded' | 'pretty' | 'json';
 
@@ -94,9 +94,7 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
         <div className="flex min-w-0 items-center gap-x-2 overflow-hidden">
           {selected ? (
             <div className="text-muted-foreground flex min-w-0 items-center gap-x-2 overflow-hidden">
-              <span className={cn('shrink-0 rounded px-1 py-0 font-mono text-[0.6rem] font-medium uppercase tracking-wide leading-tight', getTagClasses(selected.tag))}>
-                {selected.tag}
-              </span>
+              <LogTagChip tag={selected.tag} />
               <span className="font-mono text-meta tabular-nums shrink-0">{formatLogClock(selected.ts)}</span>
               <span aria-hidden className="shrink-0 opacity-40">·</span>
               <span className="font-mono text-meta uppercase tracking-wider shrink-0">view {effectiveMode}</span>
@@ -256,7 +254,7 @@ function DecodedPanel({ decoded }: { decoded: NonNullable<ReturnType<typeof deco
     <div className="flex flex-col gap-3 px-4 py-3 text-[13px]">
       {(decoded.cmd || decoded.payloadType) && (
         <section className={accentSectionClasses}>
-          <div className="text-muted-foreground mb-2 font-mono text-[0.6rem] font-medium uppercase tracking-wider">Header</div>
+          <div className="text-muted-foreground mb-2 font-mono text-xs font-medium uppercase tracking-wider">Header</div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {decoded.cmd && (
               <FieldCard label="CMD" value={decoded.cmd} description={decoded.cmdDescription} />
@@ -270,7 +268,7 @@ function DecodedPanel({ decoded }: { decoded: NonNullable<ReturnType<typeof deco
               {metaFields.map((f) => (
                 <span
                   key={f.key}
-                  className="border-border/40 bg-muted/40 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.65rem]"
+                  className="border-border/40 bg-muted/40 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-xs"
                   title={f.description}
                 >
                   <span className="text-muted-foreground">{f.key}</span>
@@ -285,11 +283,11 @@ function DecodedPanel({ decoded }: { decoded: NonNullable<ReturnType<typeof deco
       {decoded.innerFields.length > 0 && (
         <section className={accentSectionClasses}>
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-muted-foreground font-mono text-[0.6rem] font-medium uppercase tracking-wider">Payload</div>
+            <div className="text-muted-foreground font-mono text-xs font-medium uppercase tracking-wider">Payload</div>
             {decoded.resultDetail && (
               <span
                 className={cn(
-                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[0.65rem] ring-1',
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs ring-1',
                   resultChipClass(decoded.resultDetail),
                 )}
                 title={decoded.resultDetailDescription}
@@ -355,7 +353,7 @@ function FieldRow({
           <div className="flex flex-col gap-1">
             <pre
               className={cn(
-                'bg-muted/40 m-0 rounded p-2 font-mono text-[12px] leading-snug whitespace-pre-wrap break-words',
+                'bg-muted/40 m-0 rounded p-2 font-mono text-[13px] leading-snug whitespace-pre-wrap break-words',
                 !expanded && 'max-h-32 overflow-hidden',
               )}
             >

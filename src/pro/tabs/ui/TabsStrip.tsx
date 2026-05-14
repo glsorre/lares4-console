@@ -117,6 +117,7 @@ export function TabsStrip() {
           featureId="tabs"
           label="New tab"
           variant="inline"
+          leadingIcon={Plus}
           onLicenseChanged={() => setLicenseTick((n) => n + 1)}
         />
       )}

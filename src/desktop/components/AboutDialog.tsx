@@ -181,7 +181,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             <div className="flex flex-col">
               <DialogTitle className="flex items-center gap-2">
                 <span>{APP_DISPLAY_NAME}</span>
-                <Badge variant="secondary" className="font-mono text-[10px]">
+                <Badge variant="secondary" className="font-mono text-xs">
                   v{APP_VERSION}
                 </Badge>
               </DialogTitle>
@@ -246,7 +246,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <h3 className="text-xs font-medium">Active commercial licenses</h3>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   Pro features under PolyForm Noncommercial 1.0.0
                 </span>
               </div>
@@ -293,7 +293,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                   </tbody>
                 </table>
               </div>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Tokens verified offline against bundled Ed25519 public key. Manage keys per feature from each feature&apos;s settings.
               </p>
             </div>
@@ -332,11 +332,11 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                       ) : (
                         <span className="font-mono truncate">{dep.name}</span>
                       )}
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         v{dep.version}
                       </span>
                     </div>
-                    <Badge variant="outline" className="font-mono text-[10px]">
+                    <Badge variant="outline" className="font-mono text-xs">
                       {dep.license}
                     </Badge>
                   </li>

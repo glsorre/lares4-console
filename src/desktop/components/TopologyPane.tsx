@@ -6,9 +6,10 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { statusColorVar } from '../runtime/topology-status-color.js';
 import type { TopologyNode, TopologySnapshot } from '../../core/topology.js';
 
-type TopologyVariant = 'panel' | 'rail';
+type TopologyVariant = 'panel' | 'rail' | 'compact';
 
 interface TopologyPaneProps {
   topology: TopologySnapshot;
@@ -17,6 +18,9 @@ interface TopologyPaneProps {
   onClose?: () => void;
   onRunStateAll?: () => void;
   canRunStateAll?: boolean;
+  recentDeviceIds?: ReadonlySet<string>;
+  filter?: string;
+  onFilterChange?: (next: string) => void;
 }
 
 const STATUS_STYLE: Record<TopologyNode['status'], string> = {
@@ -39,8 +43,14 @@ export function TopologyPane({
   onClose,
   onRunStateAll,
   canRunStateAll = false,
+  recentDeviceIds,
+  filter: filterProp,
+  onFilterChange,
 }: TopologyPaneProps) {
-  const [filter, setFilter] = useState('');
+  const isControlled = filterProp !== undefined && onFilterChange !== undefined;
+  const [internalFilter, setInternalFilter] = useState('');
+  const filter = isControlled ? filterProp! : internalFilter;
+  const setFilter = isControlled ? onFilterChange! : setInternalFilter;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
@@ -69,23 +79,26 @@ export function TopologyPane({
   }
 
   const isRail = variant === 'rail';
+  const isCompact = variant === 'compact';
 
   const empty = topology.total === 0;
 
+  const showCloseButton = isRail && onClose;
+  const showFilterInput = !empty && !isCompact;
   const headerSlot = (
     <div className={cn(
-      'flex shrink-0 flex-col gap-1.5 px-4 py-1.5',
-      isRail ? 'border-b border-border/60' : 'border-b border-border/60',
+      'flex shrink-0 flex-col gap-1.5 border-b border-border/60',
+      isCompact ? 'px-3 py-1.5' : 'px-4 py-1.5',
     )}>
-      <div className="flex min-h-[34px] items-center gap-2">
+      <div className={cn('flex items-center gap-2', isCompact ? 'min-h-[26px]' : 'min-h-[34px]')}>
         <Network className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
-        <span className="text-sm font-medium shrink-0">Devices</span>
+        <span className={cn('shrink-0 font-medium', isCompact ? 'text-xs' : 'text-sm')}>Devices</span>
         {!empty && (
-          <span className="text-muted-foreground font-mono text-xs tabular-nums shrink-0">
+          <span className="text-muted-foreground ml-auto font-mono text-xs tabular-nums shrink-0">
             {filtered.total}{filtered.total !== topology.total ? `/${topology.total}` : ''}
           </span>
         )}
-        {isRail && onClose && (
+        {showCloseButton && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -103,7 +116,7 @@ export function TopologyPane({
           </Tooltip>
         )}
       </div>
-      {!empty && (
+      {showFilterInput && (
         <div className="relative flex min-w-0 flex-1 items-center">
           <Search className="text-muted-foreground pointer-events-none absolute left-2 size-3.5" aria-hidden />
           <Input
@@ -175,7 +188,7 @@ export function TopologyPane({
                         onClick={() => onFilterById(node.id)}
                         title={`Filter log to id:${node.id}`}
                       >
-                        <span className="text-muted-foreground w-10 shrink-0 font-mono text-[0.7rem] tabular-nums">
+                        <span className="text-muted-foreground w-10 shrink-0 font-mono text-xs tabular-nums">
                           {node.id}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-sm">
@@ -183,7 +196,7 @@ export function TopologyPane({
                         </span>
                         <span
                           className={cn(
-                            'shrink-0 rounded px-1.5 py-0.5 font-mono text-[0.65rem] uppercase ring-1',
+                            'shrink-0 rounded px-1.5 py-0.5 font-mono text-xs uppercase ring-1',
                             STATUS_STYLE[node.status],
                           )}
                           title={node.state ?? 'unknown'}
@@ -201,6 +214,75 @@ export function TopologyPane({
       </div>
     </ScrollArea>
   );
+
+  const compactListBody = (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="flex flex-col gap-0.5 px-2 py-2">
+        {filtered.groups.map((group) => {
+          const isCollapsed = collapsed.has(group.kind);
+          return (
+            <div key={group.kind} className="flex flex-col">
+              <button
+                type="button"
+                className="bg-pane/85 text-muted-foreground hover:bg-accent/40 sticky top-0 z-10 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs font-semibold tracking-[0.08em] uppercase backdrop-blur"
+                onClick={() => toggle(group.kind)}
+                aria-expanded={!isCollapsed}
+              >
+                {isCollapsed ? <ChevronRight className="size-3" aria-hidden /> : <ChevronDown className="size-3" aria-hidden />}
+                <span>{group.label}</span>
+                <span className="text-muted-foreground/80 ml-auto font-mono text-xs tracking-normal normal-case tabular-nums">{group.count}</span>
+              </button>
+              {!isCollapsed && (
+                <ul className="flex flex-col" role="list">
+                  {group.nodes.map((node) => {
+                    const recent = recentDeviceIds?.has(node.id) ?? false;
+                    return (
+                      <li key={`${group.kind}-${node.id}`}>
+                        <button
+                          type="button"
+                          className={cn(
+                            'hover:bg-accent/40 grid w-full grid-cols-[38px_1fr_auto_10px] items-center gap-2 rounded-md px-1.5 py-1 text-left',
+                          )}
+                          style={recent ? { boxShadow: 'inset 2px 0 0 var(--primary)' } : undefined}
+                          onClick={() => onFilterById(node.id)}
+                          title={`Filter log to id:${node.id}`}
+                        >
+                          <span className="text-muted-foreground font-mono text-xs tabular-nums">
+                            {node.id}
+                          </span>
+                          <span className="min-w-0 truncate text-[13px]">
+                            {node.label ?? <span className="text-muted-foreground italic">id {node.id}</span>}
+                          </span>
+                          <span className="text-muted-foreground font-mono text-xs tracking-normal">
+                            {node.state ?? ''}
+                          </span>
+                          <span
+                            className="inline-block size-2 rounded-full"
+                            style={{ background: statusColorVar(node.status) }}
+                            title={node.state ?? node.status}
+                            aria-label={node.status}
+                          />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </ScrollArea>
+  );
+
+  if (isCompact) {
+    return (
+      <div className="bg-pane/30 border-border/60 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {headerSlot}
+        <div className="flex min-h-0 flex-1 flex-col">{empty ? emptyBody : compactListBody}</div>
+      </div>
+    );
+  }
 
   if (isRail) {
     return (

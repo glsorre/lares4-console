@@ -33,7 +33,7 @@ export interface MessageListItem {
   repeat?: number;
 }
 
-function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: string } | undefined {
+export function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: string; id?: string } | undefined {
   for (const [key, value] of Object.entries(obj)) {
     if (value === null || typeof value !== 'object') continue;
     const arrayLike = Array.isArray(value) ? value[0] : value;
@@ -44,7 +44,7 @@ function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: stri
         : id !== undefined ? `[${String(id)}]`
           : sta !== undefined ? String(sta)
             : undefined;
-      return { key, idPart };
+      return { key, idPart, id: id !== undefined ? String(id) : undefined };
     }
     return { key };
   }

@@ -25,7 +25,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { getTagClasses } from '../runtime/log-tag-classes.js';
+import { LogTagChip } from './LogTagChip.js';
 
 const TAIL_THRESHOLD_PX = 24;
 
@@ -339,7 +339,7 @@ function Row({
       transition={animateEnter ? { duration: 0.12, ease: [0.22, 1, 0.36, 1] } : undefined}
       className={cn(
         'hover:bg-muted/80 group relative grid min-h-9 w-full cursor-pointer items-center gap-x-3 rounded-lg border border-transparent pr-2 pl-3 py-1 text-left transition-[opacity,background-color,box-shadow]',
-        'grid-cols-[1rem_minmax(3.5rem,max-content)_4.5rem_1fr_auto]',
+        'grid-cols-[1rem_minmax(4rem,max-content)_4.5rem_1fr_auto]',
         isError && !selected && 'bg-red-50/60 dark:bg-red-950/30',
         highlightCls && !selected && highlightCls,
         selected && 'shadow-sm',
@@ -360,14 +360,7 @@ function Row({
       }}
     >
       <Icon className="size-3.5 text-muted-foreground shrink-0" aria-hidden />
-      <span
-        className={cn(
-          'rounded px-1 py-0 text-center font-mono text-[0.6rem] font-medium tracking-wide uppercase leading-tight',
-          getTagClasses(item.tag),
-        )}
-      >
-        {item.tag}
-      </span>
+      <LogTagChip tag={item.tag} />
       <span className="text-muted-foreground font-mono text-meta tabular-nums opacity-70">
         {formatLogClock(item.ts)}
       </span>
