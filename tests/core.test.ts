@@ -18,7 +18,7 @@ import { sliceRenderedLine, wrapRenderedLine } from '../src/core/render.js';
 import { DEFAULT_EVENT_FILTERS } from '../src/core/defaults.js';
 import type { EventFilter, LogEntry } from '../src/core/types.js';
 import { parseCommandTokens } from '../src/core/parsers.js';
-import { formatOutput } from '../src/core/utils.js';
+import { formatOutput, formatUnknownError, isPlaceholderErrorMessage } from '../src/core/utils.js';
 
 describe('autocomplete', () => {
   it('suggests raw full values', () => {
@@ -547,5 +547,88 @@ describe('raw formatter behavior', () => {
   it('keeps non-json raw text unchanged in fallback path model', () => {
     const raw = 'RAW:unstructured-frame';
     assert.equal(raw, 'RAW:unstructured-frame');
+  });
+});
+
+describe('formatUnknownError', () => {
+  it('returns Error.message', () => {
+    assert.equal(formatUnknownError(new Error('boom')), 'boom');
+  });
+
+  it('falls back to Error.name when message is empty', () => {
+    const e = new Error('');
+    e.name = 'WeirdError';
+    assert.equal(formatUnknownError(e), 'WeirdError');
+  });
+
+  it('returns string values unchanged', () => {
+    assert.equal(formatUnknownError('plain error'), 'plain error');
+  });
+
+  it('returns Unknown error for null/undefined/empty', () => {
+    assert.equal(formatUnknownError(null), 'Unknown error');
+    assert.equal(formatUnknownError(undefined), 'Unknown error');
+    assert.equal(formatUnknownError(''), 'Unknown error');
+  });
+
+  it('formats CloseEvent-shaped object with code and unclean flag', () => {
+    const close = { code: 1006, reason: '', wasClean: false };
+    assert.equal(formatUnknownError(close), 'WebSocket closed (code 1006) (unclean)');
+  });
+
+  it('formats CloseEvent-shaped object with reason', () => {
+    const close = { code: 1011, reason: 'server overload', wasClean: false };
+    assert.equal(
+      formatUnknownError(close),
+      'WebSocket closed (code 1011): server overload (unclean)',
+    );
+  });
+
+  it('formats Event-shaped object with type and target url', () => {
+    const event = { type: 'error', target: { url: 'wss://1.2.3.4/ws' } };
+    assert.equal(formatUnknownError(event), 'WebSocket error (wss://1.2.3.4/ws)');
+  });
+
+  it('prefers message over type for ErrorEvent-shaped object', () => {
+    const event = { type: 'error', message: 'handshake failed', target: { url: 'wss://h/ws' } };
+    assert.equal(formatUnknownError(event), 'handshake failed (wss://h/ws)');
+  });
+
+  it('returns Unknown error for empty plain object', () => {
+    assert.equal(formatUnknownError({}), 'Unknown error');
+  });
+
+  it('falls back to JSON for arbitrary plain objects with own props', () => {
+    assert.equal(formatUnknownError({ foo: 'bar' }), '{"foo":"bar"}');
+  });
+});
+
+describe('isPlaceholderErrorMessage', () => {
+  it('detects [object Event]', () => {
+    assert.equal(isPlaceholderErrorMessage('[object Event]'), true);
+  });
+
+  it('detects [object Object]', () => {
+    assert.equal(isPlaceholderErrorMessage('[object Object]'), true);
+  });
+
+  it('detects [object CloseEvent]', () => {
+    assert.equal(isPlaceholderErrorMessage('[object CloseEvent]'), true);
+  });
+
+  it('detects [object ErrorEvent] with surrounding whitespace', () => {
+    assert.equal(isPlaceholderErrorMessage('  [object ErrorEvent]  '), true);
+  });
+
+  it('does not match real messages', () => {
+    assert.equal(isPlaceholderErrorMessage('Connection refused'), false);
+  });
+
+  it('does not match placeholder with trailing text', () => {
+    assert.equal(isPlaceholderErrorMessage('[object Event] trailing'), false);
+  });
+
+  it('does not match empty string', () => {
+    assert.equal(isPlaceholderErrorMessage(''), false);
   });
 });

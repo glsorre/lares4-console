@@ -97,6 +97,7 @@ export interface ConnectionProfile {
   logTagFilters?: LogTag[];
   macros?: Macro[];
   triggers?: TriggerRule[];
+  readOnly?: boolean;
 }
 
 interface ProfilesFile {
@@ -105,7 +106,9 @@ interface ProfilesFile {
   profiles: ConnectionProfile[];
 }
 
-const DEFAULT_FILE: ProfilesFile = { version: 1, profiles: [] };
+function emptyFile(): ProfilesFile {
+  return { version: 1, profiles: [] };
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -116,7 +119,7 @@ export class DesktopProfilesRepository {
 
   async readAll(): Promise<ProfilesFile> {
     const raw = await this.persistence.read();
-    if (!raw) return { ...DEFAULT_FILE };
+    if (!raw) return emptyFile();
     try {
       const parsed = JSON.parse(raw) as Partial<ProfilesFile>;
       const profiles = Array.isArray(parsed.profiles) ? parsed.profiles
@@ -136,11 +139,15 @@ export class DesktopProfilesRepository {
             : undefined;
           const macros = sanitizeMacros((p as { macros?: unknown }).macros);
           const triggers = sanitizeTriggers((p as { triggers?: unknown }).triggers);
+          const readOnly = typeof (p as { readOnly?: unknown }).readOnly === 'boolean'
+            ? (p as { readOnly: boolean }).readOnly
+            : undefined;
           return {
             ...p,
             logTagFilters: tags,
             macros,
             triggers,
+            readOnly,
           };
         }) : [];
       return {
@@ -149,7 +156,7 @@ export class DesktopProfilesRepository {
         profiles,
       };
     } catch {
-      return { ...DEFAULT_FILE };
+      return emptyFile();
     }
   }
 
@@ -172,6 +179,7 @@ export class DesktopProfilesRepository {
     logTagFilters?: LogTag[];
     macros?: Macro[];
     triggers?: TriggerRule[];
+    readOnly?: boolean;
   }): Promise<void> {
     const data = await this.readAll();
     const ts = nowIso();
@@ -188,6 +196,7 @@ export class DesktopProfilesRepository {
       logTagFilters: input.logTagFilters !== undefined ? input.logTagFilters : prev?.logTagFilters,
       macros: input.macros !== undefined ? input.macros : prev?.macros,
       triggers: input.triggers !== undefined ? input.triggers : prev?.triggers,
+      readOnly: input.readOnly !== undefined ? input.readOnly : prev?.readOnly,
     };
     if (idx >= 0) data.profiles[idx] = profile;
     else data.profiles.push(profile);

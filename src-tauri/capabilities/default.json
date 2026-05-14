@@ -3,16 +3,23 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "console-*"
   ],
   "permissions": [
     "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:event:allow-listen",
     {
       "identifier": "shell:allow-open",
       "allow": [
         { "url": "https://*" },
         { "url": "http://*" }
       ]
-    }
+    },
+    "updater:default",
+    "process:default",
+    "process:allow-restart"
   ]
 }

@@ -128,6 +128,7 @@ export function ConnectionSidebar() {
   const [name, setName] = useState('');
   const [sender, setSender] = useState('lares4 console');
   const [wss, setWss] = useState(true);
+  const [readOnly, setReadOnly] = useState(false);
   const [saveAsDefault, setSaveAsDefault] = useState(true);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -162,6 +163,7 @@ export function ConnectionSidebar() {
     setName('');
     setSender('lares4 console');
     setWss(true);
+    setReadOnly(false);
     setSaveAsDefault(true);
     setErrorMsg(null);
     setView('form');
@@ -174,6 +176,7 @@ export function ConnectionSidebar() {
     setName(p.name);
     setSender(p.sender);
     setWss(p.wss);
+    setReadOnly(p.readOnly === true);
     setSaveAsDefault(false);
     setErrorMsg(null);
     setView('form');
@@ -203,7 +206,7 @@ export function ConnectionSidebar() {
     setSaving(true);
     setErrorMsg(null);
     try {
-      await controller.saveProfile({ name: trimmed, ip, pin, sender, wss, makeDefault: saveAsDefault });
+      await controller.saveProfile({ name: trimmed, ip, pin, sender, wss, readOnly, makeDefault: saveAsDefault });
       await refreshProfiles();
       void controller.connect({ ip, pin, sender, wss, profileName: trimmed });
     } catch (err) {
@@ -218,7 +221,7 @@ export function ConnectionSidebar() {
     setSaving(true);
     setErrorMsg(null);
     try {
-      await controller.saveProfile({ name: trimmed, ip, pin, sender, wss, makeDefault: saveAsDefault });
+      await controller.saveProfile({ name: trimmed, ip, pin, sender, wss, readOnly, makeDefault: saveAsDefault });
       await refreshProfiles();
       setView('list');
       setEditingProfile(undefined);
@@ -492,6 +495,10 @@ export function ConnectionSidebar() {
           <div className="flex items-center gap-1.5">
             <Checkbox id="sb-wss" checked={wss} onCheckedChange={(c) => setWss(c === true)} className="size-3.5" />
             <Label htmlFor="sb-wss" className="text-xs font-normal leading-none">Secure WebSocket (WSS)</Label>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Checkbox id="sb-readonly" checked={readOnly} onCheckedChange={(c) => setReadOnly(c === true)} className="size-3.5" />
+            <Label htmlFor="sb-readonly" className="text-xs font-normal leading-none">Read-only on connect</Label>
           </div>
         </div>
       </div>

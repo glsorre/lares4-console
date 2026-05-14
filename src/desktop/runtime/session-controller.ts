@@ -6,8 +6,9 @@ import type { TriggerRule } from '@pro/triggers/types.js';
 import { DEFAULT_EVENT_FILTERS } from '../../core/defaults.js';
 import { executeCommand } from '../../core/command-router.js';
 import type { EventFilter, LogEntry, LogSource, LogTag, OutputFormat } from '../../core/types.js';
-import { nowIso, safeJson, formatOutput, shouldPrint } from '../../core/utils.js';
+import { nowIso, safeJson, formatOutput, formatUnknownError, isPlaceholderErrorMessage, shouldPrint } from '../../core/utils.js';
 import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
+import type { SocketCloseInfo, SocketErrorInfo } from '../../infra/lares4-logger.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
 import { CommandHistory } from '../../core/history.js';
 import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
@@ -17,6 +18,8 @@ import { ReplayEngine } from '../../core/replay-engine.js';
 import type { Macro, MacroStep } from '@pro/macros/types.js';
 import { MacroEngine } from '@pro/macros/engine.js';
 import { isFeatureLicensed } from './commercial-license-prefs.js';
+import { isReadOnlyMode, setReadOnlyMode, subscribeReadOnlyMode } from './read-only-prefs.js';
+import { createReadOnlyGuard, ReadOnlyBlockedError } from './read-only-guard.js';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
@@ -57,11 +60,13 @@ export interface SessionSnapshot {
   triggers: TriggerRule[];
   pendingTxCount: number;
   liveStreamPaused: boolean;
+  readOnly: boolean;
   licensed: {
     macros: boolean;
     tabs: boolean;
     triggers: boolean;
     annotations: boolean;
+    multiwindow: boolean;
   };
 }
 
@@ -77,6 +82,7 @@ export interface SessionControllerDeps {
   isTabsLicensed?: () => boolean;
   isTriggersLicensed?: () => boolean;
   isAnnotationsLicensed?: () => boolean;
+  isMultiwindowLicensed?: () => boolean;
 }
 
 function generateId(): string {
@@ -142,6 +148,7 @@ export class SessionController {
   private readonly isTabsLicensed: () => boolean;
   private readonly isTriggersLicensed: () => boolean;
   private readonly isAnnotationsLicensed: () => boolean;
+  private readonly isMultiwindowLicensed: () => boolean;
   private triggers: TriggerRule[] = [];
   private readonly pendingTx = new Map<string, {
     sentAtMs: number;
@@ -157,6 +164,10 @@ export class SessionController {
    *  wire frames emitted during it attribute to `'command'`. */
   private commandSourceDepth = 0;
   private liveStreamPaused = false;
+  private readOnly = false;
+  private unsubscribeReadOnly: (() => void) | undefined;
+  private lastSocketClose: SocketCloseInfo | undefined;
+  private lastSocketError: SocketErrorInfo | undefined;
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
@@ -165,6 +176,7 @@ export class SessionController {
     this.isTabsLicensed = deps.isTabsLicensed ?? (() => isFeatureLicensed('tabs'));
     this.isTriggersLicensed = deps.isTriggersLicensed ?? (() => isFeatureLicensed('triggers'));
     this.isAnnotationsLicensed = deps.isAnnotationsLicensed ?? (() => isFeatureLicensed('annotations'));
+    this.isMultiwindowLicensed = deps.isMultiwindowLicensed ?? (() => isFeatureLicensed('multiwindow'));
     this.replayEngine = new ReplayEngine(
       (entry) => {
         this.store.push({ ...entry, source: entry.source ?? 'lifecycle' });
@@ -189,6 +201,17 @@ export class SessionController {
         this.emit();
       },
     );
+    this.readOnly = isReadOnlyMode();
+    this.unsubscribeReadOnly = subscribeReadOnlyMode((value) => {
+      this.readOnly = value;
+      if (value && this.macroEngine.status === 'playing') this.macroEngine.pause();
+      this.emit();
+    });
+  }
+
+  dispose(): void {
+    this.unsubscribeReadOnly?.();
+    this.unsubscribeReadOnly = undefined;
   }
 
   subscribe(listener: () => void): () => void {
@@ -227,11 +250,13 @@ export class SessionController {
       triggers: this.triggers,
       pendingTxCount: this.pendingTx.size,
       liveStreamPaused: this.liveStreamPaused,
+      readOnly: this.readOnly,
       licensed: {
         macros: this.isMacrosLicensed(),
         tabs: this.isTabsLicensed(),
         triggers: this.isTriggersLicensed(),
         annotations: this.isAnnotationsLicensed(),
+        multiwindow: this.isMultiwindowLicensed(),
       },
     };
   }
@@ -285,11 +310,14 @@ export class SessionController {
   async connect(input: ConnectInput): Promise<void> {
     this.connectionStatus = 'connecting';
     this.error = undefined;
+    this.lastSocketClose = undefined;
+    this.lastSocketError = undefined;
     if (input.profileName) {
       const profile = await this.profiles.get(input.profileName);
       this.logTagFilters = profile?.logTagFilters;
       this.macros = profile?.macros ?? [];
       this.triggers = profile?.triggers ?? [];
+      if (profile?.readOnly === true && !this.readOnly) setReadOnlyMode(true);
     } else {
       this.logTagFilters = undefined;
       this.macros = [];
@@ -301,6 +329,8 @@ export class SessionController {
       const client = await factory(input, {
         onSocketSend: (raw) => this.recordSent(raw),
         onSocketReceive: (raw) => this.recordReceived(raw),
+        onSocketError: (info) => { this.lastSocketError = info; },
+        onSocketClose: (info) => { this.lastSocketClose = info; },
       });
       this.lares = client.lares;
       this.socket = client.socket;
@@ -313,10 +343,21 @@ export class SessionController {
     } catch (error) {
       this.connected = false;
       this.connectionStatus = 'error';
-      this.error = error instanceof Error ? error.message : String(error);
+      this.error = this.resolveConnectError(error);
       this.pushSystemMessage(`Connection failed: ${this.error}`);
     }
     this.emit();
+  }
+
+  private resolveConnectError(error: unknown): string {
+    const baseMsg = error instanceof Error ? error.message : '';
+    if (baseMsg.length > 0 && !isPlaceholderErrorMessage(baseMsg)) return baseMsg;
+    if (this.lastSocketClose && (this.lastSocketClose.code !== 1000 || !this.lastSocketClose.wasClean)) {
+      return formatUnknownError(this.lastSocketClose);
+    }
+    if (this.lastSocketError) return formatUnknownError(this.lastSocketError);
+    if (baseMsg) return baseMsg;
+    return formatUnknownError(error);
   }
 
   disconnect(): void {
@@ -335,6 +376,8 @@ export class SessionController {
     this.connectionStatus = 'idle';
     this.error = undefined;
     this.activeProfileName = undefined;
+    this.lastSocketClose = undefined;
+    this.lastSocketError = undefined;
     this.emit();
   }
 
@@ -352,6 +395,10 @@ export class SessionController {
   setLiveStreamPaused(paused: boolean): void {
     this.liveStreamPaused = paused;
     this.emit();
+  }
+
+  setReadOnly(value: boolean): void {
+    setReadOnlyMode(value);
   }
 
   setCommandLine(line: string): void {
@@ -420,6 +467,7 @@ export class SessionController {
 
   runMacro(id: string): void {
     this.requireMacrosLicense();
+    if (this.readOnly) throw new Error('Read-only mode — macros cannot run.');
     const macro = this.macros.find((m) => m.id === id);
     if (!macro) return;
     this.macroEngine.load(macro);
@@ -427,9 +475,17 @@ export class SessionController {
   }
 
   pauseMacro(): void { this.requireMacrosLicense(); this.macroEngine.pause(); }
-  resumeMacro(): void { this.requireMacrosLicense(); this.macroEngine.play(); }
+  resumeMacro(): void {
+    this.requireMacrosLicense();
+    if (this.readOnly) throw new Error('Read-only mode — macros cannot resume.');
+    this.macroEngine.play();
+  }
   stopMacro(): void { this.requireMacrosLicense(); this.macroEngine.stop(); }
-  stepMacro(): void { this.requireMacrosLicense(); this.macroEngine.step(); }
+  stepMacro(): void {
+    this.requireMacrosLicense();
+    if (this.readOnly) throw new Error('Read-only mode — macros cannot step.');
+    this.macroEngine.step();
+  }
 
   startRecordingMacro(): void {
     this.requireMacrosLicense();
@@ -482,10 +538,15 @@ export class SessionController {
     this.history.add(line);
     this.commandLine = '';
     const groupId = `cmd-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
+    const baseLares = this.lares;
+    const baseSend = this.socket.send;
+    const ctxIo = this.readOnly
+      ? createReadOnlyGuard(baseLares, baseSend)
+      : { lares: baseLares, socketSend: baseSend };
     try {
       const items = await this.runWithCommandSource(() => executeCommand(line, {
-        lares: this.lares!,
-        socketSend: this.socket!.send,
+        lares: ctxIo.lares,
+        socketSend: ctxIo.socketSend,
         outputFormat: this.outputFormat,
         eventFilters: this.eventFilters,
         onEventFiltersChanged: (next) => { this.eventFilters = next; },
@@ -509,12 +570,22 @@ export class SessionController {
         }
       }
     } catch (error) {
-      this.store.push({
-        level: 'error',
-        tag: 'ERROR',
-        source: 'command',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      if (error instanceof ReadOnlyBlockedError) {
+        this.store.push({
+          level: 'warn',
+          tag: 'SYSTEM',
+          source: 'command',
+          message: error.message,
+          groupId,
+        });
+      } else {
+        this.store.push({
+          level: 'error',
+          tag: 'ERROR',
+          source: 'command',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     this.emit();
   }
@@ -533,7 +604,15 @@ export class SessionController {
     return await this.profiles.readAll();
   }
 
-  async saveProfile(input: { name: string; ip: string; pin: string; wss: boolean; sender: string; makeDefault?: boolean }): Promise<void> {
+  async saveProfile(input: {
+    name: string;
+    ip: string;
+    pin: string;
+    wss: boolean;
+    sender: string;
+    readOnly?: boolean;
+    makeDefault?: boolean;
+  }): Promise<void> {
     await this.profiles.upsert(input);
   }
 
@@ -655,11 +734,18 @@ export class SessionController {
     let pushed = false;
     if (event.type === 'error' && shouldPrint(this.eventFilters, 'errors')) {
       const isObj = typeof event.message !== 'string' && event.message !== undefined;
+      const rawText = typeof event.message === 'string' ? event.message : formatUnknownError(event.message);
+      let text = rawText;
+      if (isPlaceholderErrorMessage(rawText)) {
+        const fallback = this.lastSocketClose ?? this.lastSocketError;
+        const substituted = fallback ? formatUnknownError(fallback) : rawText;
+        text = isPlaceholderErrorMessage(substituted) ? 'WebSocket error' : substituted;
+      }
       this.store.push({
         level: 'error',
         tag: 'ERROR',
         source: 'lifecycle',
-        message: typeof event.message === 'string' ? event.message : safeJson(event.message),
+        message: text,
         payload: isObj ? event.message : undefined,
       });
       pushed = true;

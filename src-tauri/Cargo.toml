@@ -24,4 +24,13 @@ log = "0.4"
 tauri = { version = "2.11.1", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 dirs = "6"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
+base64 = "0.22"
+hex = "0.4"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[features]
+keychain-it = []

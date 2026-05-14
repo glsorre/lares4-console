@@ -23,16 +23,17 @@
     "pretypecheck": "npm run gen:acks",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "test": "tsx --test tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts",
-    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts",
+    "test": "tsx --test tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
+    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
     "test:ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
-    "@noble/ed25519": "^3.1.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-updater": "^2.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -51,6 +52,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.26.0",
+    "@noble/ed25519": "^3.1.0",
     "@tauri-apps/cli": "^2.11.1",
     "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",

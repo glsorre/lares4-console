@@ -22,6 +22,38 @@ export function safeJson(value: unknown): string {
   }
 }
 
+const PLACEHOLDER_ERROR_RE = /^\[object [A-Za-z]+\]$/;
+
+export function isPlaceholderErrorMessage(s: string): boolean {
+  return PLACEHOLDER_ERROR_RE.test(s.trim());
+}
+
+export function formatUnknownError(value: unknown): string {
+  if (value == null) return 'Unknown error';
+  if (typeof value === 'string') return value.length > 0 ? value : 'Unknown error';
+  if (value instanceof Error) return value.message || value.name || 'Unknown error';
+  if (typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    if (typeof v.code === 'number' && 'reason' in v) {
+      const reason = typeof v.reason === 'string' && v.reason.length > 0 ? `: ${v.reason}` : '';
+      const clean = v.wasClean === false ? ' (unclean)' : '';
+      return `WebSocket closed (code ${String(v.code)})${reason}${clean}`;
+    }
+    const message = typeof v.message === 'string' && v.message.length > 0 ? v.message : undefined;
+    const type = typeof v.type === 'string' ? v.type : undefined;
+    const target = v.target as { url?: unknown } | undefined;
+    const url = target && typeof target.url === 'string' ? target.url : undefined;
+    if (message) return url ? `${message} (${url})` : message;
+    if (type) return url ? `WebSocket ${type} (${url})` : `WebSocket ${type}`;
+    try {
+      const json = JSON.stringify(value);
+      if (json && json !== '{}') return json;
+    } catch { /* fall through */ }
+    return 'Unknown error';
+  }
+  return String(value);
+}
+
 export function prettyLines(value: unknown, depth: number): string[] {
   const pad = '  '.repeat(depth);
   const childPad = '  '.repeat(depth + 1);

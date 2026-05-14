@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
 import { AppShell } from './AppShell.js';
 import { TabsProvider } from '@pro/tabs/context.js';
+import { WindowsProvider } from '@pro/windows/context.js';
 import { bootstrapLicenses } from './runtime/commercial-license-prefs.js';
 import './styles.css';
 
@@ -10,9 +11,11 @@ function render(): void {
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
       <HashRouter>
-        <TabsProvider>
-          <AppShell />
-        </TabsProvider>
+        <WindowsProvider>
+          <TabsProvider>
+            <AppShell />
+          </TabsProvider>
+        </WindowsProvider>
       </HashRouter>
     </React.StrictMode>,
   );

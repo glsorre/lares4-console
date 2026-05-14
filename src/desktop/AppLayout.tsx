@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { useEffect, useReducer, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Radio, Terminal } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -7,6 +7,16 @@ import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AboutDialog } from './components/AboutDialog.js';
 import { ThemeToggle } from './components/theme-toggle.js';
+import { ReadOnlyToggle } from './components/ReadOnlyToggle.js';
+import { UpdateBanner } from './components/UpdateBanner.js';
+import { NewWindowButton } from '@pro/windows/ui/NewWindowButton.js';
+import { useIsMainWindow } from '@pro/windows/context.js';
+import {
+  getUpdaterAdapter,
+  nextUpdaterState,
+  runCheck,
+  type UpdaterState,
+} from './runtime/updater.js';
 import { formatConnectionLabel } from './runtime/connection-label.js';
 import {
   connectionChipClasses,
@@ -26,10 +36,69 @@ export type LayoutOutletContext = {
 export function AppLayout() {
   const { snapshot } = useSessionController();
   const location = useLocation();
+  const navigate = useNavigate();
+  const isMainWindow = useIsMainWindow();
   const isConsole = location.pathname === '/console';
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [updaterState, dispatchUpdater] = useReducer(nextUpdaterState, { phase: 'idle' } as UpdaterState);
+  const [updaterDismissed, setUpdaterDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!isMainWindow) return;
+    let cancelled = false;
+    void (async () => {
+      const adapter = await getUpdaterAdapter();
+      if (cancelled || !adapter) return;
+      dispatchUpdater({ type: 'check-start' });
+      const outcome = await runCheck(adapter);
+      if (cancelled) return;
+      dispatchUpdater({ type: 'check-result', outcome });
+    })();
+    return () => { cancelled = true; };
+  }, [isMainWindow]);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void listen<{ label?: string; route?: string }>('window://navigate', (event) => {
+      const route = event.payload?.route;
+      if (typeof route === 'string' && route.length > 0) navigate(route);
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => { /* not in Tauri */ });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [navigate]);
+
+  const installUpdate = () => {
+    void (async () => {
+      const adapter = await getUpdaterAdapter();
+      if (!adapter) return;
+      dispatchUpdater({ type: 'install-start' });
+      try {
+        await adapter.install((event) => {
+          if (event.phase === 'progress') {
+            dispatchUpdater({
+              type: 'install-progress',
+              downloaded: event.downloaded,
+              total: event.total,
+            });
+          } else if (event.phase === 'started') {
+            dispatchUpdater({ type: 'install-progress', downloaded: 0, total: event.total });
+          }
+        });
+        dispatchUpdater({ type: 'install-done' });
+        await adapter.restart();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        dispatchUpdater({ type: 'check-result', outcome: { kind: 'error', message } });
+      }
+    })();
+  };
 
   // Auto-close sidebar when connected
   useEffect(() => {
@@ -118,15 +187,33 @@ export function AppLayout() {
               <span className="font-mono truncate">{formatReplayLabel(snapshot.replayStatus)}</span>
             </div>
           ) : null}
+          {snapshot.readOnly ? (
+            <div
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-100/70 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+              aria-label="Read-only mode active — device commands are blocked"
+            >
+              <span className="truncate">Read-only</span>
+            </div>
+          ) : null}
         </div>
 
         {/* Right */}
         <div className="flex shrink-0 items-center gap-1.5">
+          <NewWindowButton />
+          <ReadOnlyToggle />
           <ThemeToggle />
         </div>
       </motion.header>
 
       <TabsStrip />
+
+      {isMainWindow && !updaterDismissed && (updaterState.phase === 'available' || updaterState.phase === 'installing') ? (
+        <UpdateBanner
+          state={updaterState}
+          onInstall={installUpdate}
+          onDismiss={() => setUpdaterDismissed(true)}
+        />
+      ) : null}
 
       <main
         id="main-content"

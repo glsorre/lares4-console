@@ -150,7 +150,12 @@ export function CommandPane({
           </TooltipContent>
         </Tooltip>
       </div>
-      {!command && !open && (
+      {snapshot.readOnly && (
+        <p className="mt-1.5 px-1 text-meta text-amber-700 dark:text-amber-300">
+          Read-only mode — device commands are blocked. Local commands (format, events, replay, export) still run.
+        </p>
+      )}
+      {!command && !open && !snapshot.readOnly && (
         <p className="text-muted-foreground/70 mt-1.5 px-1 text-meta">
           <span className="font-mono">Tab</span> autocomplete · <span className="font-mono">↑↓</span> history · <span className="font-mono">Enter</span> run
         </p>

@@ -2,7 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
-use tauri::Emitter;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+mod commands;
+mod keychain;
+mod license;
 
 fn app_config_dir() -> Result<PathBuf, String> {
     let base =
@@ -69,17 +73,63 @@ fn resolve_default_session_path(prefix: String, ext: String) -> Result<String, S
 
 const ABOUT_MENU_ID: &str = "about";
 const ABOUT_EVENT: &str = "menu://about";
+const NAVIGATE_EVENT: &str = "window://navigate";
+
+fn is_valid_window_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 64
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+#[tauri::command]
+fn open_console_window(
+    app: AppHandle,
+    label: String,
+    route: Option<String>,
+) -> Result<(), String> {
+    if label == "main" {
+        return Err("Window label 'main' is reserved".to_string());
+    }
+    if !is_valid_window_label(&label) {
+        return Err(format!("Invalid window label: {label}"));
+    }
+    if app.get_webview_window(&label).is_some() {
+        return Err(format!("Window '{label}' already exists"));
+    }
+    let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+        .title("lares4 Console")
+        .inner_size(960.0, 720.0)
+        .resizable(true)
+        .build()
+        .map_err(|error| format!("Failed to create window: {error}"))?;
+    if let Some(route) = route {
+        let label_for_emit = label.clone();
+        let payload = serde_json::json!({ "label": label_for_emit, "route": route });
+        let _ = window.emit(NAVIGATE_EVENT, payload);
+    }
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             read_profiles_file,
             write_profiles_file,
             read_utf8_file,
             write_utf8_file,
-            resolve_default_session_path
+            resolve_default_session_path,
+            open_console_window,
+            commands::verify_license_token,
+            commands::save_license_token,
+            commands::read_all_licenses,
+            commands::clear_license,
+            commands::complete_license_migration
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

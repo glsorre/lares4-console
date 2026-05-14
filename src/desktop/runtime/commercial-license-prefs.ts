@@ -5,17 +5,14 @@ import {
   type LicensePayload,
   type LicenseVerifyResult,
 } from './license-verify.js';
+import { getLicenseTransport } from './license-transport.js';
 
-const LEGACY_STORAGE_KEY = 'lares4.commercialLicense';
-const BUNDLE_STORAGE_KEY = 'lares4.license.bundle';
+export type FeatureId = 'macros' | 'tabs' | 'triggers' | 'annotations' | 'multiwindow';
 
-export type FeatureId = 'macros' | 'tabs' | 'triggers' | 'annotations';
-
-export const FEATURE_IDS: readonly FeatureId[] = ['macros', 'tabs', 'triggers', 'annotations'];
+export const FEATURE_IDS: readonly FeatureId[] = ['macros', 'tabs', 'triggers', 'annotations', 'multiwindow'];
 
 export interface FeatureDescriptor {
   id: FeatureId;
-  storageKey: string;
   title: string;
   description: string;
 }
@@ -23,113 +20,112 @@ export interface FeatureDescriptor {
 export const FEATURES: Record<FeatureId, FeatureDescriptor> = {
   macros: {
     id: 'macros',
-    storageKey: 'lares4.license.macros',
     title: 'Macros commercial license',
     description:
       'Macros are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to unlock.',
   },
   tabs: {
     id: 'tabs',
-    storageKey: 'lares4.license.tabs',
     title: 'Tabs commercial license',
     description:
       'Multi-connection tabs are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to unlock additional tabs.',
   },
   triggers: {
     id: 'triggers',
-    storageKey: 'lares4.license.triggers',
     title: 'Triggers commercial license',
     description:
       'Trigger rules are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to enable rule editing and live evaluation.',
   },
   annotations: {
     id: 'annotations',
-    storageKey: 'lares4.license.annotations',
     title: 'Pin & bookmarks commercial license',
     description:
       'Pin and bookmarks are licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to enable pinning, bookmarking, notes, and export.',
   },
+  multiwindow: {
+    id: 'multiwindow',
+    title: 'Multi-window commercial license',
+    description:
+      'Multi-window is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to open additional console windows, each with an independent connection.',
+  },
 };
 
-function getStorage(): Storage | null {
-  try {
-    return typeof window !== 'undefined' ? window.localStorage : null;
-  } catch {
-    return null;
+// In-memory mirror of the keychain. Populated by `bootstrapLicenses` and kept
+// in sync by save/clear paths. Keys: 'bundle', 'macros', 'tabs', 'triggers',
+// 'annotations', 'multiwindow'.
+const tokenStore = new Map<string, string>();
+
+const LEGACY_LOCALSTORAGE_KEYS: Readonly<Record<FeatureId | 'bundle', string>> = {
+  bundle: 'lares4.license.bundle',
+  macros: 'lares4.license.macros',
+  tabs: 'lares4.license.tabs',
+  triggers: 'lares4.license.triggers',
+  annotations: 'lares4.license.annotations',
+  multiwindow: 'lares4.license.multiwindow',
+};
+const LEGACY_COMMERCIAL_KEY = 'lares4.commercialLicense';
+const MIGRATED_MARKER = '_migrated';
+
+let bootstrapped = false;
+let warnedUnbootstrapped = false;
+
+function warnUnboostrapped(): void {
+  if (!bootstrapped && !warnedUnbootstrapped) {
+    warnedUnbootstrapped = true;
+    console.warn('[license] isFeatureLicensed called before bootstrapLicenses resolved');
   }
 }
 
-function readKey(storage: Storage, key: string): string | null {
-  try {
-    const v = storage.getItem(key);
-    return v && v.length > 0 ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Raw stored token for a feature, ignoring legacy and bundle. */
 function getFeatureRaw(id: FeatureId): string | null {
-  const storage = getStorage();
-  if (!storage) return null;
-  const direct = readKey(storage, FEATURES[id].storageKey);
-  if (direct !== null) return direct;
-  if (id === 'macros') {
-    return readKey(storage, LEGACY_STORAGE_KEY);
-  }
-  return null;
+  return tokenStore.get(id) ?? null;
 }
 
 export function getBundleRaw(): string | null {
-  const storage = getStorage();
-  if (!storage) return null;
-  return readKey(storage, BUNDLE_STORAGE_KEY);
+  return tokenStore.get('bundle') ?? null;
 }
 
 export function getFeatureLicense(id: FeatureId): string | null {
   return getFeatureRaw(id);
 }
 
-/** Persist a raw token under a feature's storage key (no validation). */
+/**
+ * Persist a raw token under a feature's slot. Use `verifyAndSaveFeatureLicense`
+ * for new tokens — this entry point exists for the "clear" case (null) and
+ * for low-level callers that already hold a verified token. Raw saves go to
+ * the keychain via the active transport (fire-and-forget); the in-memory
+ * mirror updates synchronously.
+ */
 export function setFeatureLicense(id: FeatureId, key: string | null): void {
-  const storage = getStorage();
-  if (!storage) return;
-  const descriptor = FEATURES[id];
-  try {
-    const trimmed = key?.trim() ?? '';
-    const existing = readKey(storage, descriptor.storageKey);
-    if (existing) dropVerifyCache(existing);
-    if (trimmed.length > 0) {
-      storage.setItem(descriptor.storageKey, trimmed);
-    } else {
-      storage.removeItem(descriptor.storageKey);
-    }
-    if (id === 'macros') {
-      const legacy = readKey(storage, LEGACY_STORAGE_KEY);
-      if (legacy) dropVerifyCache(legacy);
-      storage.removeItem(LEGACY_STORAGE_KEY);
-    }
-  } catch {
-    /* ignore */
+  const transport = getLicenseTransport();
+  const trimmed = key?.trim() ?? '';
+  const existing = tokenStore.get(id);
+  if (existing) dropVerifyCache(existing);
+  if (trimmed.length > 0) {
+    tokenStore.set(id, trimmed);
+    void transport.save(id, trimmed).catch(() => undefined);
+  } else {
+    tokenStore.delete(id);
+    void transport.clear(id).catch(() => undefined);
   }
 }
 
 /** Persist a raw bundle (`f: "*"`) token. */
 export function setBundleLicense(key: string | null): void {
-  const storage = getStorage();
-  if (!storage) return;
-  try {
-    const trimmed = key?.trim() ?? '';
-    const existing = readKey(storage, BUNDLE_STORAGE_KEY);
-    if (existing) dropVerifyCache(existing);
-    if (trimmed.length > 0) {
-      storage.setItem(BUNDLE_STORAGE_KEY, trimmed);
-    } else {
-      storage.removeItem(BUNDLE_STORAGE_KEY);
-    }
-  } catch {
-    /* ignore */
+  const transport = getLicenseTransport();
+  const trimmed = key?.trim() ?? '';
+  const existing = tokenStore.get('bundle');
+  if (existing) dropVerifyCache(existing);
+  if (trimmed.length > 0) {
+    tokenStore.set('bundle', trimmed);
+    void transport.save('bundle', trimmed).catch(() => undefined);
+  } else {
+    tokenStore.delete('bundle');
+    void transport.clear('bundle').catch(() => undefined);
   }
+}
+
+function isNotExpired(p: LicensePayload): boolean {
+  return p.exp === undefined || p.exp * 1000 > Date.now();
 }
 
 function cachedResult(raw: string | null): LicenseVerifyResult | undefined {
@@ -138,6 +134,7 @@ function cachedResult(raw: string | null): LicenseVerifyResult | undefined {
 
 /** Synchronous check — relies on the in-process verify cache. */
 export function isFeatureLicensed(id: FeatureId): boolean {
+  warnUnboostrapped();
   const bundle = cachedResult(getBundleRaw());
   if (bundle?.ok && bundle.payload.f === '*' && isNotExpired(bundle.payload)) {
     return true;
@@ -162,35 +159,100 @@ export function getFeatureLicensePayload(id: FeatureId): LicensePayload | null {
   return null;
 }
 
-function isNotExpired(p: LicensePayload): boolean {
-  return p.exp === undefined || p.exp * 1000 > Date.now();
+function getLocalStorage(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+async function migrateFromLocalStorageOnce(alreadyMigrated: boolean): Promise<void> {
+  const storage = getLocalStorage();
+  if (!storage) return;
+  if (alreadyMigrated) return;
+
+  const transport = getLicenseTransport();
+  const candidates: Array<{ id: FeatureId | 'bundle'; raw: string; lsKey: string }> = [];
+
+  for (const [slot, lsKey] of Object.entries(LEGACY_LOCALSTORAGE_KEYS) as [FeatureId | 'bundle', string][]) {
+    const v = storage.getItem(lsKey);
+    if (v && v.length > 0) candidates.push({ id: slot, raw: v, lsKey });
+  }
+  // Legacy single-key macros storage.
+  const legacy = storage.getItem(LEGACY_COMMERCIAL_KEY);
+  if (legacy && legacy.length > 0 && !candidates.some((c) => c.id === 'macros')) {
+    candidates.push({ id: 'macros', raw: legacy, lsKey: LEGACY_COMMERCIAL_KEY });
+  }
+
+  for (const { id, raw, lsKey } of candidates) {
+    try {
+      const res = await transport.save(id, raw);
+      if (res.ok) {
+        // Sync the mirror with what Rust persisted. Bundle tokens land in the
+        // bundle slot regardless of how they were keyed in localStorage.
+        if (res.payload.f === '*') {
+          tokenStore.set('bundle', raw);
+          if (id !== 'bundle') tokenStore.delete(id);
+        } else {
+          tokenStore.set(id, raw);
+        }
+        storage.removeItem(lsKey);
+      }
+    } catch {
+      // Skip silently; we'll still set the marker so we don't retry forever.
+    }
+  }
+
+  // Always remove the legacy single-key entry — even if it was invalid.
+  storage.removeItem(LEGACY_COMMERCIAL_KEY);
+
+  try {
+    await transport.completeMigration();
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
- * Verify every stored token once (signature + structure + claim).
- * After this resolves, `isFeatureLicensed` is reliable for the lifetime
- * of the page. Saves go through `verifyAndSaveFeatureLicense` which keeps
- * the cache hot.
+ * Verify every stored token once (signature + structure + claim) so the
+ * synchronous `isFeatureLicensed` / `getFeatureLicensePayload` accessors are
+ * reliable for the lifetime of the page. Also runs the one-shot migration
+ * from the old `window.localStorage` slots into the keychain.
  */
 export async function bootstrapLicenses(): Promise<void> {
-  const bundle = getBundleRaw();
-  if (bundle) {
-    // Verify against any feature — bundle accepts all.
-    await verifyLicense(bundle, 'macros');
+  const transport = getLicenseTransport();
+  let stored: Record<string, string> = {};
+  try {
+    stored = await transport.readAll();
+  } catch {
+    /* keychain unreachable — leave the mirror empty */
+  }
+  const alreadyMigrated = stored[MIGRATED_MARKER] === '1' || stored[MIGRATED_MARKER] === 'true';
+  for (const [slot, raw] of Object.entries(stored)) {
+    if (slot === MIGRATED_MARKER) continue;
+    tokenStore.set(slot, raw);
   }
   await Promise.all(
-    FEATURE_IDS.map(async (id) => {
-      const raw = getFeatureRaw(id);
-      if (raw) await verifyLicense(raw, id);
-    }),
+    Array.from(tokenStore.entries()).map(([slot, raw]) =>
+      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch(() => undefined),
+    ),
   );
+  await migrateFromLocalStorageOnce(alreadyMigrated);
+  // Reverify any tokens introduced by the migration step.
+  await Promise.all(
+    Array.from(tokenStore.entries()).map(([slot, raw]) =>
+      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch(() => undefined),
+    ),
+  );
+  bootstrapped = true;
 }
 
 /**
  * Verify a candidate token against a target feature. If verification passes:
- *   - tokens with `f: "*"` are stored under the bundle key (and any prior
- *     feature key for `featureId` is cleared);
- *   - tokens with `f: featureId` are stored under that feature's key.
+ *   - tokens with `f: "*"` are stored under the bundle slot (and any prior
+ *     per-feature slot for `featureId` is cleared);
+ *   - tokens with `f: featureId` are stored under that feature's slot.
  * Returns the structured verify result without mutating storage on failure.
  */
 export async function verifyAndSaveFeatureLicense(
@@ -201,14 +263,26 @@ export async function verifyAndSaveFeatureLicense(
   if (trimmed.length === 0) {
     return { ok: false, reason: 'malformed-structure' };
   }
-  const result = await verifyLicense(trimmed, featureId);
+  const transport = getLicenseTransport();
+  let result: LicenseVerifyResult;
+  try {
+    result = await transport.save(featureId, trimmed);
+  } catch {
+    return { ok: false, reason: 'storage-failed' };
+  }
   if (!result.ok) return result;
   if (result.payload.f === '*') {
-    setBundleLicense(trimmed);
-    setFeatureLicense(featureId, null);
+    const previousFeature = tokenStore.get(featureId);
+    if (previousFeature) dropVerifyCache(previousFeature);
+    tokenStore.set('bundle', trimmed);
+    tokenStore.delete(featureId);
   } else {
-    setFeatureLicense(featureId, trimmed);
+    const previous = tokenStore.get(featureId);
+    if (previous && previous !== trimmed) dropVerifyCache(previous);
+    tokenStore.set(featureId, trimmed);
   }
+  // Prime the verify cache so the sync accessors see the new payload.
+  await verifyLicense(trimmed, featureId);
   return result;
 }
 
@@ -223,4 +297,11 @@ export function setCommercialLicense(key: string | null): void {
 
 export function isCommercialLicensed(): boolean {
   return isFeatureLicensed('macros');
+}
+
+/** Test-only: wipe the in-memory mirror so the next test starts clean. */
+export function __resetTokenStoreForTests(): void {
+  tokenStore.clear();
+  bootstrapped = false;
+  warnedUnbootstrapped = false;
 }
