@@ -22,6 +22,7 @@ import { TriggersPane } from '@pro/triggers/ui/TriggersPane.js';
 import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
 import { useSessionController } from '@pro/tabs/context.js';
+import { compileChipFilters } from '../../core/log-query.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
 import type { FeatureId } from '../runtime/commercial-license-prefs.js';
 
@@ -110,6 +111,15 @@ export function ConsolePage() {
     () => new Set(snapshot.bookmarks.map((b) => b.groupId)),
     [snapshot.bookmarks],
   );
+
+  // Apply the chip filter once at the parent so both LogsListPane and LogDetailPane see
+  // the same entry set. Otherwise their `buildMessageListItems` calls disagree about
+  // which rows merge — leaving merged-row selections unresolvable in the detail pane.
+  const filteredLogEntries = useMemo(() => {
+    const chipFilters = compileChipFilters(searchInput);
+    if (chipFilters.isEmpty) return snapshot.logEntries;
+    return snapshot.logEntries.filter((entry) => chipFilters.predicate(entry));
+  }, [snapshot.logEntries, searchInput]);
 
   useEffect(() => {
     if (snapshot.logEntries.length === 0) return;
@@ -227,7 +237,7 @@ export function ConsolePage() {
       </TabsList>
       <TabsContent value="detail" className="flex min-h-0 min-w-0 flex-1 flex-col">
         <LogDetailPane
-          entries={snapshot.logEntries}
+          entries={filteredLogEntries}
           selectedId={selectedId}
           outputFormat={snapshot.outputFormat}
           onFormatChange={(fmt) => controller.setOutputFormat(fmt)}

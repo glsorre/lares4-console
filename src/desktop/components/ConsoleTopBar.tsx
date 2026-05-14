@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import {
   Eraser,
   Globe,
@@ -16,13 +16,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -30,7 +23,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { computeLogStats } from '../../core/log-stats.js';
@@ -50,6 +42,8 @@ import type { LogEntry, LogLevel, LogSource, LogTag } from '../../core/types.js'
 import { formatReplayLabel } from '../runtime/status-chips.js';
 import { getTagDotClass } from '../runtime/log-tag-classes.js';
 import type { SessionSnapshot } from '../runtime/session-controller.js';
+import { AutocompletePopover, type AutocompletePickHelpers } from './AutocompletePopover.js';
+import { type AutocompleteGroup, type AutocompleteItem } from './AutocompleteList.js';
 import { StatsCluster } from './StatsBar.js';
 
 interface ConsoleTopBarProps {
@@ -299,11 +293,161 @@ const KEY_HINTS: ReadonlyArray<{ key: ChipKind; hint: string }> = [
 
 const KEY_RE = /(?:^|\s)(tag|source|level|id|cmd):(\S*)$/i;
 
+interface SuggestionHandlers {
+  commitChip: (chip: ChipToken) => void;
+  selectKey: (key: ChipKind) => void;
+}
+
+interface SuggestionContext {
+  partial: { key: ChipKind; fragment: string } | null;
+  trailing: string;
+  counts: {
+    tag: ReadonlyMap<LogTag, number>;
+    source: ReadonlyMap<LogSource, number>;
+    level: ReadonlyMap<LogLevel, number>;
+  };
+  alreadySelected: ReadonlySet<string>;
+}
+
+interface SuggestionAction {
+  run: () => void;
+  commits: boolean;
+}
+
+interface BuiltSuggestions {
+  groups: AutocompleteGroup[];
+  actions: SuggestionAction[];
+}
+
+function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers): BuiltSuggestions {
+  const groups: AutocompleteGroup[] = [];
+  const actions: SuggestionAction[] = [];
+
+  if (ctx.partial) {
+    const { key, fragment } = ctx.partial;
+    const frag = fragment.toLowerCase();
+
+    if (key === 'tag') {
+      const matches = TAG_VALUES.filter((t) => t.toLowerCase().startsWith(frag));
+      if (matches.length === 0) return { groups: [], actions: [] };
+      const items: AutocompleteItem[] = matches.map((tag) => {
+        const raw = `tag:${tag}`;
+        const used = ctx.alreadySelected.has(raw);
+        actions.push({
+          run: () => handlers.commitChip({ kind: 'tag', value: tag, raw }),
+          commits: true,
+        });
+        return {
+          key: `tag-${tag}`,
+          disabled: used,
+          label: (
+            <>
+              <span className={cn('size-1.5 rounded-full', getTagDotClass(tag))} aria-hidden />
+              <span className={cn('ml-1', used && 'text-muted-foreground line-through')}>{tag}</span>
+            </>
+          ),
+          trailing: (
+            <span className="text-muted-foreground ml-auto tabular-nums">{ctx.counts.tag.get(tag) ?? 0}</span>
+          ),
+        };
+      });
+      groups.push({ heading: 'Tag', items });
+      return { groups, actions };
+    }
+
+    if (key === 'source') {
+      const matches = SOURCE_VALUES.filter((s) => s.startsWith(frag));
+      if (matches.length === 0) return { groups: [], actions: [] };
+      const items: AutocompleteItem[] = matches.map((src) => {
+        const raw = `source:${src}`;
+        const used = ctx.alreadySelected.has(raw);
+        actions.push({
+          run: () => handlers.commitChip({ kind: 'source', value: src, raw }),
+          commits: true,
+        });
+        return {
+          key: `source-${src}`,
+          disabled: used,
+          label: (
+            <span className={cn('text-foreground', used && 'text-muted-foreground line-through')}>{src}</span>
+          ),
+          trailing: (
+            <span className="text-muted-foreground ml-auto tabular-nums">{ctx.counts.source.get(src) ?? 0}</span>
+          ),
+        };
+      });
+      groups.push({ heading: 'Source', items });
+      return { groups, actions };
+    }
+
+    if (key === 'level') {
+      const matches = LEVEL_VALUES.filter((l) => l.startsWith(frag));
+      if (matches.length === 0) return { groups: [], actions: [] };
+      const items: AutocompleteItem[] = matches.map((lvl) => {
+        const raw = `level:${lvl}`;
+        const used = ctx.alreadySelected.has(raw);
+        actions.push({
+          run: () => handlers.commitChip({ kind: 'level', value: lvl, raw }),
+          commits: true,
+        });
+        return {
+          key: `level-${lvl}`,
+          disabled: used,
+          label: (
+            <span className={cn('text-foreground', used && 'text-muted-foreground line-through')}>{lvl}</span>
+          ),
+          trailing: (
+            <span className="text-muted-foreground ml-auto tabular-nums">{ctx.counts.level.get(lvl) ?? 0}</span>
+          ),
+        };
+      });
+      groups.push({ heading: 'Level', items });
+      return { groups, actions };
+    }
+
+    actions.push({ run: () => {}, commits: false });
+    groups.push({
+      heading: key === 'id' ? 'Device ID' : 'Command',
+      items: [
+        {
+          key: `${key}-hint`,
+          disabled: true,
+          label: (
+            <span className="text-muted-foreground font-sans text-[0.7rem]">
+              Type a value and press Space to commit.
+            </span>
+          ),
+        },
+      ],
+    });
+    return { groups, actions };
+  }
+
+  const fragment = ctx.trailing.trim().toLowerCase();
+  const filtered = fragment
+    ? KEY_HINTS.filter(({ key }) => key.startsWith(fragment))
+    : KEY_HINTS;
+  if (filtered.length === 0) return { groups: [], actions: [] };
+  const items: AutocompleteItem[] = filtered.map(({ key, hint }) => {
+    actions.push({ run: () => handlers.selectKey(key), commits: false });
+    return {
+      key: `key-${key}`,
+      label: (
+        <>
+          <span className="text-foreground">{key}:</span>
+          <span className="text-muted-foreground ml-2 font-sans text-[0.7rem]">{hint}</span>
+        </>
+      ),
+    };
+  });
+  groups.push({ heading: 'Filter by', items });
+  return { groups, actions };
+}
+
 function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: SearchChipsInputProps) {
   const split = useMemo(() => splitQuery(value), [value]);
   const trailing = split.trailing;
-  const [open, setOpen] = useState(false);
-  const justCommittedRef = useRef(false);
+  const [focused, setFocused] = useState(false);
 
   const counts = useMemo(() => {
     const tag = new Map<LogTag, number>();
@@ -324,50 +468,69 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
     return { key: m[1].toLowerCase() as ChipKind, fragment: m[2] };
   }, [trailing]);
 
-  const setTrailing = (next: string) => {
-    onChange(joinQuery({ chips: split.chips, trailing: next }));
-  };
+  const setTrailing = useCallback(
+    (next: string) => {
+      onChange(joinQuery({ chips: split.chips, trailing: next }));
+    },
+    [onChange, split.chips],
+  );
 
-  const removeChip = (raw: string) => {
-    onChange(removeChipFromInput(value, raw));
-  };
+  const removeChip = useCallback(
+    (raw: string) => {
+      onChange(removeChipFromInput(value, raw));
+    },
+    [onChange, value],
+  );
 
-  const commitChip = (chip: ChipToken) => {
-    const stripped = trailing.replace(KEY_RE, '').trimStart();
-    const base = joinQuery({ chips: split.chips, trailing: stripped });
-    onChange(addChip(base, chip));
-    setOpen(false);
-    justCommittedRef.current = true;
-    queueMicrotask(() => inputRef.current?.focus());
-  };
+  const commitChip = useCallback(
+    (chip: ChipToken) => {
+      const stripped = trailing.replace(KEY_RE, '').trimStart();
+      const base = joinQuery({ chips: split.chips, trailing: stripped });
+      onChange(addChip(base, chip));
+      queueMicrotask(() => inputRef.current?.focus());
+    },
+    [trailing, split.chips, onChange, inputRef],
+  );
 
-  useEffect(() => {
-    if (open && trailing.length === 0 && partial === null) {
-      setOpen(false);
-    }
-  }, [open, trailing, partial]);
+  const alreadySelected = useMemo(
+    () => new Set(split.chips.map((c) => c.raw)),
+    [split.chips],
+  );
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Backspace' && trailing.length === 0 && split.chips.length > 0) {
-      event.preventDefault();
-      removeChip(split.chips[split.chips.length - 1].raw);
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      setOpen(false);
-      return;
-    }
-    if (event.key === 'ArrowDown' && !open) {
-      setOpen(true);
-    }
-  };
+  const { groups, actions } = useMemo(
+    () =>
+      buildSuggestions(
+        { partial, trailing, counts, alreadySelected },
+        {
+          commitChip,
+          selectKey: (key) => setTrailing(`${key}:`),
+        },
+      ),
+    [partial, trailing, counts, alreadySelected, commitChip, setTrailing],
+  );
+
+  const handlePick = useCallback(
+    (index: number, helpers: AutocompletePickHelpers) => {
+      const action = actions[index];
+      if (!action) return;
+      action.run();
+      if (action.commits) helpers.commit();
+    },
+    [actions],
+  );
 
   return (
     <div className="relative flex min-w-0 flex-1 items-center">
       <Search className="text-muted-foreground pointer-events-none absolute left-2 z-10 size-3.5" aria-hidden />
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverAnchor asChild>
+      <AutocompletePopover
+        groups={groups}
+        value={trailing}
+        focused={focused}
+        onPick={handlePick}
+        side="bottom"
+        idPrefix="lares4-filter"
+      >
+        {(api) => (
           <div
             className={cn(
               'flex min-h-7 w-full flex-wrap items-center gap-1 rounded-md border bg-background pl-7 pr-7 py-0.5 transition-shadow',
@@ -381,20 +544,28 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
               <ChipPill key={chip.raw} chip={chip} onRemove={() => removeChip(chip.raw)} />
             ))}
             <input
+              {...api.inputProps}
               ref={inputRef}
               value={trailing}
-              onChange={(event) => {
-                setTrailing(event.target.value);
-                if (event.target.value.length > 0 && !open) setOpen(true);
-              }}
-              onFocus={() => {
-                if (justCommittedRef.current) {
-                  justCommittedRef.current = false;
+              onChange={(event) => setTrailing(event.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(event) => {
+                if (event.key === 'Backspace' && trailing.length === 0 && split.chips.length > 0) {
+                  event.preventDefault();
+                  removeChip(split.chips[split.chips.length - 1].raw);
                   return;
                 }
-                if (trailing.length > 0 || partial !== null) setOpen(true);
+                const result = api.handleKeyDown(event);
+                if (result === 'handled') {
+                  if (event.key === 'Escape') event.stopPropagation();
+                  return;
+                }
+                if (event.key === 'ArrowDown' && !api.open) {
+                  event.preventDefault();
+                  api.reopen();
+                }
               }}
-              onKeyDown={handleKeyDown}
               spellCheck={false}
               autoCorrect="off"
               autoCapitalize="off"
@@ -404,47 +575,25 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
               placeholder={split.chips.length === 0 ? 'Search or filter  (⌘F)' : ''}
               className="min-w-[6rem] flex-1 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground"
             />
+            {value && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground absolute right-1 top-1/2 z-10 h-5 w-5 -translate-y-1/2 p-0"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onChange('');
+                }}
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X className="size-3" aria-hidden />
+              </Button>
+            )}
           </div>
-        </PopoverAnchor>
-        {value && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground absolute right-1 top-1/2 z-10 h-5 w-5 -translate-y-1/2 p-0"
-            onClick={() => onChange('')}
-            aria-label="Clear search"
-            title="Clear search"
-          >
-            <X className="size-3" aria-hidden />
-          </Button>
         )}
-        <PopoverContent
-          align="start"
-          sideOffset={6}
-          className="w-80 p-0"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-        >
-          <Command shouldFilter={false} className="bg-transparent">
-            <CommandList>
-              <CommandEmpty>No suggestions.</CommandEmpty>
-              {partial ? (
-                <SuggestionValues
-                  partial={partial}
-                  counts={counts}
-                  alreadySelected={new Set(split.chips.map((c) => c.raw))}
-                  onPick={commitChip}
-                />
-              ) : (
-                <SuggestionKeys
-                  fragment={trailing.trim()}
-                  onPick={(key) => setTrailing(`${key}:`)}
-                />
-              )}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      </AutocompletePopover>
     </div>
   );
 }
@@ -522,127 +671,3 @@ function ChipPill({ chip, onRemove }: { chip: ChipToken; onRemove: () => void })
   );
 }
 
-interface SuggestionKeysProps {
-  fragment: string;
-  onPick: (key: ChipKind) => void;
-}
-
-function SuggestionKeys({ fragment, onPick }: SuggestionKeysProps) {
-  const filtered = fragment
-    ? KEY_HINTS.filter(({ key }) => key.startsWith(fragment.toLowerCase()))
-    : KEY_HINTS;
-  if (filtered.length === 0) {
-    return null;
-  }
-  return (
-    <CommandGroup heading="Filter by">
-      {filtered.map(({ key, hint }) => (
-        <CommandItem
-          key={key}
-          value={key}
-          onSelect={() => onPick(key)}
-          className="font-mono text-xs"
-        >
-          <span className="text-foreground">{key}:</span>
-          <span className="text-muted-foreground ml-2 font-sans text-[0.7rem]">{hint}</span>
-        </CommandItem>
-      ))}
-    </CommandGroup>
-  );
-}
-
-interface SuggestionValuesProps {
-  partial: { key: ChipKind; fragment: string };
-  counts: { tag: Map<LogTag, number>; source: Map<LogSource, number>; level: Map<LogLevel, number> };
-  alreadySelected: ReadonlySet<string>;
-  onPick: (chip: ChipToken) => void;
-}
-
-function SuggestionValues({ partial, counts, alreadySelected, onPick }: SuggestionValuesProps) {
-  const { key, fragment } = partial;
-  const frag = fragment.toLowerCase();
-
-  if (key === 'tag') {
-    const matches = TAG_VALUES.filter((t) => t.toLowerCase().startsWith(frag));
-    if (matches.length === 0) return null;
-    return (
-      <CommandGroup heading="Tag">
-        {matches.map((tag) => {
-          const raw = `tag:${tag}`;
-          const used = alreadySelected.has(raw);
-          return (
-            <CommandItem
-              key={tag}
-              value={tag}
-              disabled={used}
-              onSelect={() => onPick({ kind: 'tag', value: tag, raw })}
-              className="font-mono text-xs"
-            >
-              <span className={cn('size-1.5 rounded-full', getTagDotClass(tag))} aria-hidden />
-              <span className={cn('ml-1', used && 'text-muted-foreground line-through')}>{tag}</span>
-              <span className="text-muted-foreground ml-auto tabular-nums">{counts.tag.get(tag) ?? 0}</span>
-            </CommandItem>
-          );
-        })}
-      </CommandGroup>
-    );
-  }
-
-  if (key === 'source') {
-    const matches = SOURCE_VALUES.filter((s) => s.startsWith(frag));
-    if (matches.length === 0) return null;
-    return (
-      <CommandGroup heading="Source">
-        {matches.map((src) => {
-          const raw = `source:${src}`;
-          const used = alreadySelected.has(raw);
-          return (
-            <CommandItem
-              key={src}
-              value={src}
-              disabled={used}
-              onSelect={() => onPick({ kind: 'source', value: src, raw })}
-              className="font-mono text-xs"
-            >
-              <span className={cn('text-foreground', used && 'text-muted-foreground line-through')}>{src}</span>
-              <span className="text-muted-foreground ml-auto tabular-nums">{counts.source.get(src) ?? 0}</span>
-            </CommandItem>
-          );
-        })}
-      </CommandGroup>
-    );
-  }
-
-  if (key === 'level') {
-    const matches = LEVEL_VALUES.filter((l) => l.startsWith(frag));
-    if (matches.length === 0) return null;
-    return (
-      <CommandGroup heading="Level">
-        {matches.map((lvl) => {
-          const raw = `level:${lvl}`;
-          const used = alreadySelected.has(raw);
-          return (
-            <CommandItem
-              key={lvl}
-              value={lvl}
-              disabled={used}
-              onSelect={() => onPick({ kind: 'level', value: lvl, raw })}
-              className="font-mono text-xs"
-            >
-              <span className={cn('text-foreground', used && 'text-muted-foreground line-through')}>{lvl}</span>
-              <span className="text-muted-foreground ml-auto tabular-nums">{counts.level.get(lvl) ?? 0}</span>
-            </CommandItem>
-          );
-        })}
-      </CommandGroup>
-    );
-  }
-
-  return (
-    <CommandGroup heading={key === 'id' ? 'Device ID' : 'Command'}>
-      <CommandItem disabled className="text-muted-foreground font-sans text-[0.7rem]">
-        Type a value and press Space to commit.
-      </CommandItem>
-    </CommandGroup>
-  );
-}

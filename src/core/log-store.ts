@@ -10,15 +10,19 @@ export interface Bookmark {
 export class LogStore {
   private readonly entries: LogEntry[] = [];
   private revision = 0;
+  private nextEntryId = 0;
   private readonly bookmarks = new Map<string, Bookmark>();
   constructor(private readonly maxSize: number = 3000) {}
 
   push(entry: Omit<LogEntry, 'ts'> & { ts?: string }): void {
+    const assignedId = entry.entryId ?? `e${String(this.nextEntryId)}`;
+    this.nextEntryId += 1;
     this.entries.push({
       ...entry,
       ts: entry.ts ?? nowIso(),
       source: entry.source ?? 'lifecycle',
       message: redactSecrets(entry.message),
+      entryId: assignedId,
     });
     if (this.entries.length > this.maxSize) {
       this.entries.splice(0, this.entries.length - this.maxSize);

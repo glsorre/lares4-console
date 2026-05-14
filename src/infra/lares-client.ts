@@ -5,6 +5,8 @@ import {
   extractSocketBridge,
   type SocketCloseListener,
   type SocketErrorListener,
+  type SocketReceiveListener,
+  type SocketSendListener,
 } from './lares4-logger.js';
 
 export interface ClientEnv {
@@ -15,8 +17,8 @@ export interface ClientEnv {
 }
 
 export interface CreateLaresClientOptions {
-  onSocketSend?: (raw: string) => void;
-  onSocketReceive?: (raw: string) => void;
+  onSocketSend?: SocketSendListener;
+  onSocketReceive?: SocketReceiveListener;
   onSocketError?: SocketErrorListener;
   onSocketClose?: SocketCloseListener;
 }

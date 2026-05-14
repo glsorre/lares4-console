@@ -31,6 +31,29 @@ export interface MessageListItem {
   content: string;
   payload?: unknown;
   repeat?: number;
+  /** Correlated ACK metadata when this is a RAW_TX block whose response has arrived. */
+  ack?: {
+    result?: string;
+    latencyMs?: number;
+    payload?: unknown;
+    ts?: string;
+  };
+  /** Nested entries for CHANGE / BULK frames carrying multiple state items. */
+  children?: ChangeChild[];
+  /** All payloads captured under this row when consecutive merge-eligible frames collapsed. */
+  merged?: MergedFrame[];
+}
+
+export interface ChangeChild {
+  key: string;
+  line: string;
+}
+
+export interface MergedFrame {
+  entryId?: string;
+  ts: string;
+  payload?: unknown;
+  content: string;
 }
 
 export function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: string; id?: string } | undefined {
@@ -49,6 +72,63 @@ export function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart
     return { key };
   }
   return undefined;
+}
+
+/**
+ * For CHANGE/BULK frames, unwraps the sender-keyed wrapper (if any) and walks the
+ * device-type map, returning a count + top-types summary plus a flat list of children
+ * for inline expansion (e.g. `LIGHTS[1] STA=ON`).
+ */
+export function extractChangeChildren(payload: unknown): { summary: string; children: ChangeChild[] } {
+  const empty = { summary: '', children: [] as ChangeChild[] };
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return empty;
+  let container = payload as Record<string, unknown>;
+  // Unwrap a sender-keyed wrapper: { "lares4 console": { LIGHTS: [...], ... } }.
+  const entries = Object.entries(container);
+  if (entries.length === 1) {
+    const [, val] = entries[0]!;
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const inner = val as Record<string, unknown>;
+      // Heuristic: descend only if inner values look like device-type lists/objects.
+      const innerHasContainers = Object.values(inner).some(
+        (v) => v !== null && typeof v === 'object',
+      );
+      if (innerHasContainers) container = inner;
+    }
+  }
+  const children: ChangeChild[] = [];
+  const counts: Array<{ key: string; n: number }> = [];
+  for (const [typeKey, value] of Object.entries(container)) {
+    if (value === null || typeof value !== 'object') continue;
+    const items = Array.isArray(value) ? value : [value];
+    let count = 0;
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      const id = obj.ID ?? obj.id;
+      const sta = obj.STA ?? obj.state;
+      const idPart = id !== undefined ? `[${String(id)}]` : '';
+      const valuePart = sta !== undefined
+        ? ` STA=${String(sta)}`
+        : Object.entries(obj)
+          .filter(([k]) => k !== 'ID' && k !== 'id')
+          .slice(0, 2)
+          .map(([k, v]) => ` ${k}=${typeof v === 'object' ? '…' : String(v)}`)
+          .join('');
+      children.push({
+        key: `${typeKey}${idPart}-${String(children.length)}`,
+        line: `${typeKey}${idPart}${valuePart}`,
+      });
+      count += 1;
+    }
+    if (count > 0) counts.push({ key: typeKey, n: count });
+  }
+  if (children.length === 0) return empty;
+  counts.sort((a, b) => b.n - a.n);
+  const top = counts.slice(0, 3).map((c) => `${c.key}×${String(c.n)}`).join(' ');
+  const more = counts.length > 3 ? ` …` : '';
+  const summary = `${String(children.length)} items · ${top}${more}`;
+  return { summary, children };
 }
 
 export function summarizeForPreview(tag: LogTag, payload: unknown, fallback: string): string {
@@ -130,7 +210,7 @@ export function buildRenderRows(
   for (let idx = 0; idx < entries.length; idx += 1) {
     const entry = entries[idx];
     if (!entry) continue;
-    const blockKey = entry.groupId ?? `entry-${String(idx)}`;
+    const blockKey = entry.groupId ?? entry.entryId ?? `entry-${String(idx)}`;
     const parsedTs = Number.isNaN(Date.parse(entry.ts)) ? undefined : Date.parse(entry.ts);
 
     if (rows.length > 0 && prevBlockKey !== blockKey) {
@@ -197,7 +277,7 @@ export function buildMessageListItems(
   for (let idx = 0; idx < entries.length; idx += 1) {
     const entry = entries[idx];
     if (!entry) continue;
-    const key = entry.groupId ?? `entry-${String(idx)}`;
+    const key = entry.groupId ?? entry.entryId ?? `entry-${String(idx)}`;
     const bucket = grouped.get(key);
     if (bucket) bucket.push(entry);
     else grouped.set(key, [entry]);
@@ -212,8 +292,17 @@ export function buildMessageListItems(
       : groupEntries.map((e) => (e.message.length > 0 ? e.message : ' ')).join('\n');
     const firstLine = content.split('\n')[0] ?? '';
     const payload = groupEntries.find((e) => e.payload !== undefined)?.payload;
-    const summary = summarizeForPreview(first.tag, payload, firstLine);
+    let summary = summarizeForPreview(first.tag, payload, firstLine);
+    let children: ChangeChild[] | undefined;
+    if (first.tag === 'CHANGE' || first.tag === 'BULK') {
+      const extracted = extractChangeChildren(payload);
+      if (extracted.children.length > 1) {
+        summary = extracted.summary;
+        children = extracted.children;
+      }
+    }
     const previewBase = summary.length > 100 ? `${summary.slice(0, 100)}…` : summary;
+    const ack = groupEntries.find((e) => e.ack !== undefined)?.ack;
     items.push({
       id,
       tag: first.tag,
@@ -223,11 +312,14 @@ export function buildMessageListItems(
       collapsed: Boolean(folded && !expanded),
       content,
       payload,
+      ack,
+      children,
+      merged: [{ entryId: first.entryId, ts: first.ts, payload, content }],
     });
   }
-  const merged: MessageListItem[] = [];
+  const mergedItems: MessageListItem[] = [];
   for (const item of items) {
-    const tail = merged[merged.length - 1];
+    const tail = mergedItems[mergedItems.length - 1];
     const canMerge =
       tail !== undefined
       && tail.tag === item.tag
@@ -242,11 +334,15 @@ export function buildMessageListItems(
       tail.id = item.id;
       tail.payload = item.payload;
       tail.content = item.content;
+      // Append incoming frames (each `item` was seeded with a single-frame `merged` above).
+      if (item.merged) {
+        tail.merged = [...(tail.merged ?? []), ...item.merged];
+      }
       continue;
     }
-    merged.push({ ...item, repeat: 1 });
+    mergedItems.push({ ...item, repeat: 1 });
   }
-  return merged;
+  return mergedItems;
 }
 
 export function getVisibleRenderRowsFromFlat(

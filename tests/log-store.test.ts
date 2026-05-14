@@ -37,4 +37,19 @@ describe('LogStore', () => {
     store.push({ level: 'info', tag: 'LOG', message: 'pin=secret123' });
     assert.equal(store.all()[0]?.message, 'pin=***');
   });
+
+  it('assigns a stable monotonically-increasing entryId when none provided', () => {
+    const store = new LogStore();
+    store.push({ level: 'info', tag: 'SYSTEM', message: 'a' });
+    store.push({ level: 'info', tag: 'SYSTEM', message: 'b' });
+    const ids = store.all().map((e) => e.entryId);
+    assert.ok(ids[0] && ids[1]);
+    assert.notEqual(ids[0], ids[1]);
+  });
+
+  it('preserves a caller-supplied entryId (replay round-trip)', () => {
+    const store = new LogStore();
+    store.push({ level: 'info', tag: 'SYSTEM', message: 'a', entryId: 'caller-1' });
+    assert.equal(store.all()[0]?.entryId, 'caller-1');
+  });
 });

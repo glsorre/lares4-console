@@ -23,8 +23,8 @@
     "pretypecheck": "npm run gen:acks",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "test": "tsx --test tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
-    "test:coverage": "mkdir -p coverage && node --import tsx/esm --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
+    "test": "tsx --test --import ./tests/helpers/dom-setup.ts tests/*.test.ts tests/desktop/*.test.tsx src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
+    "test:coverage": "mkdir -p coverage && node --import tsx/esm --import ./tests/helpers/dom-setup.ts --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts tests/desktop/*.test.tsx src/pro/macros/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.ts src/pro/windows/__tests__/*.test.ts",
     "test:ci": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
@@ -52,13 +52,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.26.0",
+    "@happy-dom/global-registrator": "^20.9.0",
     "@noble/ed25519": "^3.1.0",
     "@tauri-apps/cli": "^2.11.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.26.0",
+    "happy-dom": "^20.9.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.32.0",

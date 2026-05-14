@@ -193,6 +193,9 @@ function compileToken(token: string): TokenPredicate | { error: string } {
   if (colonIdx > 0) {
     const key = token.slice(0, colonIdx).toLowerCase();
     const value = stripQuotes(token.slice(colonIdx + 1));
+    if (CHIP_KEYS.has(key) && value === '') {
+      return { predicate: () => true };
+    }
     if (key === 'tag') {
       const upper = value.toUpperCase();
       if (!TAG_SET.has(upper)) return { error: `Unknown tag: ${value}` };

@@ -9,6 +9,7 @@ function textOf(item: CommandOutputItem): string {
 import {
   buildMessageListItems,
   buildRenderRows,
+  extractChangeChildren,
   formatLogClock,
   getLogViewport,
   getVisibleRenderRows,
@@ -352,6 +353,191 @@ describe('render helpers', () => {
     const items = buildMessageListItems(entries);
     assert.equal(items.length, 1);
     assert.equal(items[0]?.repeat, 3);
+  });
+
+  it('hoists ack metadata from any TX group entry onto the MessageListItem', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'RAW_TX',
+        groupId: 'rawtx-42',
+        correlationId: '42',
+        message: '→ LIGHTS',
+      },
+      {
+        ts: new Date(1001).toISOString(),
+        level: 'info',
+        tag: 'RAW_TX',
+        groupId: 'rawtx-42',
+        correlationId: '42',
+        message: '{"CMD":"LIGHTS","ID":"42"}',
+        payload: { CMD: 'LIGHTS', ID: '42' },
+        latencyMs: 142,
+        ack: {
+          result: 'OK',
+          latencyMs: 142,
+          payload: { PAYLOAD: { RESULT: 'OK' } },
+          ts: new Date(1142).toISOString(),
+        },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.ack?.result, 'OK');
+    assert.equal(items[0]?.ack?.latencyMs, 142);
+  });
+
+  it('leaves ack undefined when no group entry carries it', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'RAW_TX',
+        groupId: 'rawtx-99',
+        correlationId: '99',
+        message: '→ LIGHTS',
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items[0]?.ack, undefined);
+  });
+
+  it('extractChangeChildren unwraps sender, summarizes, and lists children', () => {
+    const payload = {
+      'lares4 console': {
+        LIGHTS: [{ ID: '1', STA: 'ON' }, { ID: '2', STA: 'OFF' }],
+        OUTPUTS: [{ ID: '3', STA: 'DOWN' }],
+      },
+    };
+    const result = extractChangeChildren(payload);
+    assert.equal(result.children.length, 3);
+    assert.equal(result.summary, '3 items · LIGHTS×2 OUTPUTS×1');
+    assert.equal(result.children[0]?.line, 'LIGHTS[1] STA=ON');
+  });
+
+  it('extractChangeChildren handles BULK shape without sender wrapper', () => {
+    const payload = {
+      LIGHTS: [{ ID: '1', STA: 'ON' }],
+      OUTPUTS: [{ ID: '3', STA: 'DOWN' }],
+    };
+    const result = extractChangeChildren(payload);
+    assert.equal(result.children.length, 2);
+    assert.equal(result.summary, '2 items · LIGHTS×1 OUTPUTS×1');
+  });
+
+  it('extractChangeChildren returns empty for unrecognized shapes', () => {
+    assert.equal(extractChangeChildren(undefined).children.length, 0);
+    assert.equal(extractChangeChildren('string').children.length, 0);
+    assert.equal(extractChangeChildren({}).children.length, 0);
+  });
+
+  it('single-item CHANGE keeps original preview and gets no children (no chevron)', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        groupId: 'change-solo',
+        message: 'change',
+        payload: {
+          'lares4 console': {
+            LIGHTS: [{ ID: '1', STA: 'ON' }],
+          },
+        },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.children, undefined);
+    // Falls back to summarizeForPreview's CHANGE branch — sender key with bracketed id.
+    assert.ok(items[0]?.preview && !items[0]!.preview.startsWith('1 items'));
+  });
+
+  it('merged consecutive RAW_RX rows collect both payloads in order', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        message: '{"a":1}',
+        payload: { a: 1 },
+        entryId: 'a1',
+      },
+      {
+        ts: new Date(2000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        message: '{"a":1}',
+        payload: { a: 2 },
+        entryId: 'a2',
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.repeat, 2);
+    assert.equal(items[0]?.merged?.length, 2);
+    assert.deepEqual(items[0]?.merged?.[0]?.payload, { a: 1 });
+    assert.deepEqual(items[0]?.merged?.[1]?.payload, { a: 2 });
+  });
+
+  it('merged three identical CHANGE rows yields 3 frames; tail ts is latest', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g1', payload: { LIGHTS: [{ ID: '1', STA: 'ON' }] } },
+      { ts: new Date(1100).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g2', payload: { LIGHTS: [{ ID: '1', STA: 'ON' }] } },
+      { ts: new Date(1200).toISOString(), level: 'info', tag: 'CHANGE', message: 'lights[1] on', groupId: 'g3', payload: { LIGHTS: [{ ID: '1', STA: 'ON' }] } },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.repeat, 3);
+    assert.equal(items[0]?.merged?.length, 3);
+    assert.equal(items[0]?.ts, new Date(1200).toISOString());
+  });
+
+  it('non-mergeable single RAW_TX gets merged length 1', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'RAW_TX', groupId: 'rawtx-1', message: '→ LIGHTS', payload: { CMD: 'LIGHTS' } },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items[0]?.merged?.length, 1);
+    assert.equal(items[0]?.repeat, 1);
+  });
+
+  it('non-grouped entries keep stable id across filtered builds via entry.entryId', () => {
+    const entries: LogEntry[] = [
+      { ts: new Date(1000).toISOString(), level: 'info', tag: 'SYSTEM', message: 'connected', entryId: 'e0' },
+      { ts: new Date(2000).toISOString(), level: 'debug', tag: 'RAW_RX', message: 'frame-a', entryId: 'e1' },
+      { ts: new Date(3000).toISOString(), level: 'info', tag: 'CHANGE', message: 'change-a', entryId: 'e2' },
+      { ts: new Date(4000).toISOString(), level: 'debug', tag: 'RAW_RX', message: 'frame-b', entryId: 'e3' },
+    ];
+    const filtered = entries.filter((e) => e.tag !== 'SYSTEM' && e.tag !== 'CHANGE');
+    const fullItems = buildMessageListItems(entries);
+    const filteredItems = buildMessageListItems(filtered);
+    const rxFullId = fullItems.find((it) => it.tag === 'RAW_RX' && it.preview.includes('frame-b'))?.id;
+    const rxFilteredId = filteredItems.find((it) => it.tag === 'RAW_RX' && it.preview.includes('frame-b'))?.id;
+    assert.ok(rxFullId, 'rx item present in full build');
+    assert.equal(rxFilteredId, rxFullId, 'id stays stable across filter views');
+  });
+
+  it('buildMessageListItems attaches children + override preview for CHANGE rows', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        groupId: 'change-1',
+        message: 'change',
+        payload: {
+          'lares4 console': {
+            LIGHTS: [{ ID: '1', STA: 'ON' }, { ID: '2', STA: 'OFF' }],
+          },
+        },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.children?.length, 2);
+    assert.equal(items[0]?.preview, '2 items · LIGHTS×2');
   });
 });
 

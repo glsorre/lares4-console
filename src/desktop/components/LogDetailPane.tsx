@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Check, ChevronDown, ChevronRight, Copy, FileSearch, WrapText } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, FileSearch, WrapText } from 'lucide-react';
 import { PaneEmpty } from './PaneEmpty.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { buildMessageListItems, formatLogClock } from '../../core/log-view.js';
@@ -14,6 +14,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { LogTagChip } from './LogTagChip.js';
+import { ackResultChipClasses } from '../runtime/status-chips.js';
+import { highlightJson, highlightPretty } from './syntax-highlight.js';
 
 type ViewMode = 'decoded' | 'pretty' | 'json';
 
@@ -45,9 +47,26 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
   const selected = items.find((item) => item.id === selectedId);
   const hasContent = connected && selected !== undefined;
 
+  const mergedFrames = selected?.merged ?? [];
+  const frameCount = mergedFrames.length;
+  const [frameIdx, setFrameIdx] = useState<number>(0);
+  // Reset to the latest frame whenever selection changes or new frames arrive.
+  useEffect(() => {
+    setFrameIdx(Math.max(0, frameCount - 1));
+  }, [selectedId, frameCount]);
+  const activeFrame = frameCount > 0 ? mergedFrames[Math.min(frameIdx, frameCount - 1)] : undefined;
+  const activePayload = activeFrame?.payload ?? selected?.payload;
+  const activeContent = activeFrame?.content ?? selected?.content ?? '';
+  const activeTs = activeFrame?.ts ?? selected?.ts ?? '';
+
   const decoded = useMemo(() => {
     if (!selected) return undefined;
-    return decodePayload(selected.payload);
+    return decodePayload(activePayload);
+  }, [selected, activePayload]);
+
+  const ackDecoded = useMemo(() => {
+    if (!selected?.ack?.payload) return undefined;
+    return decodePayload(selected.ack.payload);
   }, [selected]);
 
   const canDecode = decoded !== undefined && !decoded.unknown;
@@ -60,19 +79,28 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
 
   const rendered = useMemo(() => {
     if (!selected) return '';
-    if (selected.payload !== undefined) {
+    if (activePayload !== undefined) {
       const formatted = effectiveMode === 'json'
-        ? safeJson(selected.payload)
-        : prettyLines(selected.payload, 0).join('\n');
+        ? safeJson(activePayload)
+        : prettyLines(activePayload, 0).join('\n');
       return redactSecrets(formatted);
     }
     try {
-      const parsed = JSON.parse(selected.content) as unknown;
+      const parsed = JSON.parse(activeContent) as unknown;
       if (effectiveMode === 'json') return safeJson(parsed);
       return prettyLines(parsed, 0).join('\n');
     } catch {
-      return selected.content;
+      return activeContent;
     }
+  }, [selected, activePayload, activeContent, effectiveMode]);
+
+  const ackRendered = useMemo(() => {
+    const ackPayload = selected?.ack?.payload;
+    if (ackPayload === undefined || ackPayload === null) return '';
+    const formatted = effectiveMode === 'json'
+      ? safeJson(ackPayload)
+      : prettyLines(ackPayload, 0).join('\n');
+    return redactSecrets(formatted);
   }, [selected, effectiveMode]);
 
   const lineCount = rendered ? rendered.split('\n').length : 0;
@@ -80,6 +108,22 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
   useEffect(() => {
     contentRef.current?.parentElement?.scrollTo({ top: 0 });
   }, [selectedId]);
+
+  useEffect(() => {
+    if (frameCount <= 1) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!event.altKey) return;
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setFrameIdx((i) => Math.max(0, i - 1));
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setFrameIdx((i) => Math.min(frameCount - 1, i + 1));
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [frameCount]);
 
   function copyContent() {
     void navigator.clipboard.writeText(rendered).then(() => {
@@ -95,13 +139,51 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
           {selected ? (
             <div className="text-muted-foreground flex min-w-0 items-center gap-x-2 overflow-hidden">
               <LogTagChip tag={selected.tag} />
-              <span className="font-mono text-meta tabular-nums shrink-0">{formatLogClock(selected.ts)}</span>
+              <span className="font-mono text-meta tabular-nums shrink-0">{formatLogClock(activeTs)}</span>
               <span aria-hidden className="shrink-0 opacity-40">·</span>
               <span className="font-mono text-meta uppercase tracking-wider shrink-0">view {effectiveMode}</span>
               {lineCount > 1 && (
                 <>
                   <span aria-hidden className="shrink-0 opacity-40">·</span>
                   <span className="font-mono tabular-nums text-meta shrink-0">{lineCount} lines</span>
+                </>
+              )}
+              {frameCount > 1 && (
+                <>
+                  <span aria-hidden className="shrink-0 opacity-40">·</span>
+                  <div className="flex shrink-0 items-center gap-0.5" aria-label="Merged frame navigator">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Previous frame"
+                          disabled={frameIdx === 0}
+                          className="text-muted-foreground hover:text-foreground rounded p-0.5 disabled:opacity-30"
+                          onClick={() => setFrameIdx((i) => Math.max(0, i - 1))}
+                        >
+                          <ChevronLeft className="size-3.5" aria-hidden />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Previous frame · Alt+←</TooltipContent>
+                    </Tooltip>
+                    <span className="font-mono tabular-nums text-meta shrink-0" aria-live="polite">
+                      {frameIdx + 1} / {frameCount}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Next frame"
+                          disabled={frameIdx >= frameCount - 1}
+                          className="text-muted-foreground hover:text-foreground rounded p-0.5 disabled:opacity-30"
+                          onClick={() => setFrameIdx((i) => Math.min(frameCount - 1, i + 1))}
+                        >
+                          <ChevronRight className="size-3.5" aria-hidden />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Next frame · Alt+→</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </>
               )}
             </div>
@@ -172,13 +254,25 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
       </div>
       <CardContent className="flex min-h-0 flex-1 flex-col px-0 pb-0">
         <span className="sr-only" aria-live="polite">
-          {selected ? `Selected ${selected.tag} log from ${formatLogClock(selected.ts)}.` : 'No log selected.'}
+          {selected
+            ? `Selected ${selected.tag} log from ${formatLogClock(selected.ts)}${selected.ack ? ' with paired ACK response.' : '.'}`
+            : 'No log selected.'}
         </span>
         <AnimatePresence mode="wait" initial={false}>
           {selected && effectiveMode === 'decoded' && decoded ? (
             <motion.div key={`decoded-${selectedId ?? 'none'}`} {...fade} className="flex min-h-0 flex-1 flex-col">
               <ScrollArea className="min-h-0 flex-1">
                 <DecodedPanel decoded={decoded} />
+                {selected.ack && (
+                  <AckSection
+                    decoded={ackDecoded}
+                    rendered={ackRendered}
+                    mode={effectiveMode}
+                    wrapLines={wrapLines}
+                    latencyMs={selected.ack.latencyMs}
+                    result={selected.ack.result}
+                  />
+                )}
               </ScrollArea>
             </motion.div>
           ) : rendered ? (
@@ -187,12 +281,22 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
                 <pre
                   ref={contentRef}
                   className={cn(
-                    'text-foreground m-0 px-4 pb-4 font-mono text-detail leading-relaxed',
+                    'text-foreground m-0 px-4 pb-4 font-mono text-[0.75rem] leading-snug',
                     wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-auto',
                   )}
                 >
-                  {rendered}
+                  {effectiveMode === 'json' ? highlightJson(rendered) : highlightPretty(rendered)}
                 </pre>
+                {selected?.ack && (
+                  <AckSection
+                    decoded={ackDecoded}
+                    rendered={ackRendered}
+                    mode={effectiveMode}
+                    wrapLines={wrapLines}
+                    latencyMs={selected.ack.latencyMs}
+                    result={selected.ack.result}
+                  />
+                )}
               </ScrollArea>
             </motion.div>
           ) : (
@@ -394,5 +498,53 @@ function FieldRow({
         <TooltipContent>{copied ? 'Copied' : 'Copy value'}</TooltipContent>
       </Tooltip>
     </div>
+  );
+}
+
+function AckSection({
+  decoded,
+  rendered,
+  mode,
+  wrapLines,
+  latencyMs,
+  result,
+}: {
+  decoded: ReturnType<typeof decodePayload>;
+  rendered: string;
+  mode: ViewMode;
+  wrapLines: boolean;
+  latencyMs?: number;
+  result?: string;
+}) {
+  const canDecode = mode === 'decoded' && decoded !== undefined && !decoded.unknown;
+  return (
+    <section className="border-border/60 mt-2 border-t px-4 pt-3 pb-4" aria-label="Paired ACK response">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-muted-foreground font-mono text-meta uppercase tracking-wider">ACK Response</span>
+        <span
+          className={cn(
+            'shrink-0 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.7rem] uppercase tracking-wide leading-tight tabular-nums',
+            ackResultChipClasses(result),
+          )}
+        >
+          <span className="font-semibold">{result ?? 'ACK'}</span>
+          {latencyMs !== undefined && <span className="font-normal">{latencyMs}ms</span>}
+        </span>
+      </div>
+      {canDecode && decoded ? (
+        <DecodedPanel decoded={decoded} />
+      ) : rendered ? (
+        <pre
+          className={cn(
+            'text-foreground m-0 font-mono text-[0.75rem] leading-snug',
+            wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-auto',
+          )}
+        >
+          {mode === 'json' ? highlightJson(rendered) : highlightPretty(rendered)}
+        </pre>
+      ) : (
+        <span className="text-muted-foreground text-meta">No payload.</span>
+      )}
+    </section>
   );
 }

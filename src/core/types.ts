@@ -10,6 +10,10 @@ export interface LogEntry {
   ts: string;
   level: LogLevel;
   tag: LogTag;
+  /** Stable per-entry id assigned by the LogStore at push time. Used by the UI to key
+   *  rows that have no `groupId` (RAW_RX, SYSTEM, CHANGE, ERROR) so selection stays
+   *  consistent across filtered views. */
+  entryId?: string;
   /**
    * Origin of this entry: user-issued command, library lifecycle event, or unattributed wire frame.
    * Optional in the type to keep test fixtures terse; production code must always set it. Use
@@ -30,6 +34,17 @@ export interface LogEntry {
   latencyMs?: number;
   /** Color tint from matched trigger rule. */
   highlight?: 'red' | 'amber' | 'emerald' | 'blue' | 'violet';
+  /**
+   * Correlated ACK metadata patched onto the matching RAW_TX group. Present on TX entries
+   * once the panel's response arrives; allows the UI to render the ACK inline rather than
+   * as a separate row.
+   */
+  ack?: {
+    result?: string;
+    latencyMs?: number;
+    payload?: unknown;
+    ts?: string;
+  };
 }
 
 /** Read the entry's source, defaulting to `'lifecycle'` for entries persisted before the field existed. */

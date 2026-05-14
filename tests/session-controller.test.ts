@@ -2,8 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DesktopProfilesRepository } from '../src/desktop/runtime/profiles-repository-desktop.js';
 import { SessionController } from '../src/desktop/runtime/session-controller.js';
-import type { ClientEnv } from '../src/infra/lares-client.js';
+import type { ClientEnv, CreateLaresClientOptions } from '../src/infra/lares-client.js';
 import type { SocketEventEmitted } from '../src/infra/socket-types.js';
+
+// Adapters: tests still author raw JSON strings; production listeners now receive SocketFrame.
+const adaptSend = (fn?: CreateLaresClientOptions['onSocketSend']) =>
+  fn ? (raw: string) => fn({ raw, ts: Date.now() }) : undefined;
+const adaptReceive = (fn?: CreateLaresClientOptions['onSocketReceive']) =>
+  fn ? (raw: string) => fn({ raw, ts: Date.now() }) : undefined;
 
 /** Minimal stubs for executing `help` and receiving socket events offline. */
 function stubLaresAndSocket() {
@@ -153,12 +159,12 @@ describe('SessionController', () => {
     assert.equal(data.defaultProfile, 'b');
   });
 
-  it('correlates ACK with sent TX and records latency', async () => {
+  it('correlates ACK with sent TX, suppresses paired ACK row, and patches ack into TX group', async () => {
     const { lares, socket, subs } = stubLaresAndSocket();
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -168,14 +174,15 @@ describe('SessionController', () => {
     const cb = subs[0];
     cb({ type: 'response', message: '{"ID":"42","PAYLOAD":{"RESULT":"OK"}}' });
     const snap = c.snapshot();
-    const ack = snap.logEntries.find((e) => e.tag === 'ACK');
-    assert.ok(ack);
-    assert.equal(ack?.correlationId, '42');
-    assert.equal(typeof ack?.latencyMs, 'number');
+    // Paired ACK no longer produces its own row — it's pasted onto the TX entries.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
     assert.equal(snap.pendingTxCount, 0);
     const taggedTx = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '42');
     assert.equal(taggedTx.length, 2);
-    assert.equal(taggedTx[0]?.latencyMs, ack?.latencyMs);
+    assert.equal(typeof taggedTx[0]?.latencyMs, 'number');
+    assert.ok(taggedTx[0]?.ack, 'expected ack metadata patched onto TX entries');
+    assert.equal(taggedTx[0]?.ack?.result, 'OK');
+    assert.equal(taggedTx[0]?.ack?.latencyMs, taggedTx[0]?.latencyMs);
   });
 
   it('correlates ACK even when sent and acks filters are disabled', async () => {
@@ -183,7 +190,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -200,14 +207,14 @@ describe('SessionController', () => {
     assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
   });
 
-  it('clears pending on WS receive when no response is emitted (READ_RES path)', async () => {
+  it('clears pending on WS receive when no response is emitted (READ_RES path) and suppresses paired RAW_RX', async () => {
     const { lares, socket } = stubLaresAndSocket();
     let captured: ((raw: string) => void) | undefined;
     let capturedReceive: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
-        capturedReceive = options?.onSocketReceive;
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
         return { lares: lares as never, socket };
       },
     });
@@ -221,9 +228,52 @@ describe('SessionController', () => {
     const tx = snap.logEntries.filter((e) => e.tag === 'RAW_TX' && e.correlationId === '5');
     assert.equal(tx.length, 2);
     assert.equal(typeof tx[0]?.latencyMs, 'number');
-    // No ACK pushed since no response event fired — only RAW_RX.
+    // No ACK pushed since no response event fired.
     assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
-    assert.ok(snap.logEntries.some((e) => e.tag === 'RAW_RX'));
+    // Paired RAW_RX is now suppressed — the suffix chip + AckSection already surface this frame.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'RAW_RX').length, 0);
+    // Raw-frame ACK still pastes ack metadata onto the TX group so the suffix chip can render.
+    assert.equal(tx[0]?.ack?.result, 'OK');
+    assert.equal(typeof tx[0]?.ack?.latencyMs, 'number');
+    assert.ok(tx[0]?.ack?.payload, 'ack payload preserved for detail pane');
+  });
+
+  it('uncorrelated raw frames (panel-pushed changes) still produce a RAW_RX row', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // Make sure the raw filter is on so RAW_RX could be pushed.
+    await c.submit('events raw');
+    // Frame with no matching pendingTx (no CMD pair, no ID echo): should not correlate.
+    capturedReceive?.('{"REALTIME":{"CHANGES":[{"ID":"1"}]}}');
+    const rx = c.snapshot().logEntries.filter((e) => e.tag === 'RAW_RX');
+    assert.equal(rx.length, 1, 'uncorrelated raw frame must remain visible as RAW_RX');
+  });
+
+  it('raw-frame ACK with RESULT_DETAIL prefers detail over generic result', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"LIGHTS","ID":"11","PAYLOAD":{"STA":"ON"}}');
+    capturedReceive?.('{"CMD":"LIGHTS_RES","ID":"11","PAYLOAD":{"RESULT":"OK","RESULT_DETAIL":"OK_APPLIED"}}');
+    const snap = c.snapshot();
+    const tx = snap.logEntries.find((e) => e.tag === 'RAW_TX' && e.correlationId === '11');
+    assert.ok(tx);
+    assert.equal(tx?.ack?.result, 'OK_APPLIED');
   });
 
   it('correlates by CMD/PAYLOAD_TYPE pair when reply ID does not echo request ID', async () => {
@@ -232,8 +282,8 @@ describe('SessionController', () => {
     let capturedReceive: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
-        capturedReceive = options?.onSocketReceive;
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
         return { lares: lares as never, socket };
       },
     });
@@ -254,8 +304,8 @@ describe('SessionController', () => {
     let capturedReceive: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
-        capturedReceive = options?.onSocketReceive;
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
         return { lares: lares as never, socket };
       },
     });
@@ -280,8 +330,8 @@ describe('SessionController', () => {
     let capturedReceive: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
-        capturedReceive = options?.onSocketReceive;
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
         return { lares: lares as never, socket };
       },
     });
@@ -296,7 +346,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -306,8 +356,10 @@ describe('SessionController', () => {
     subs[0]({ type: 'response', message: '{"PAYLOAD":{"ID":"7","RESULT":"OK"}}' });
     const snap = c.snapshot();
     assert.equal(snap.pendingTxCount, 0);
-    const ack = snap.logEntries.find((e) => e.tag === 'ACK');
-    assert.equal(ack?.correlationId, '7');
+    // Paired ACK suppressed; correlation surfaces as ack metadata on the TX group.
+    const tx = snap.logEntries.find((e) => e.tag === 'RAW_TX' && e.correlationId === '7');
+    assert.ok(tx);
+    assert.equal(tx?.ack?.result, 'OK');
   });
 
   it('pendingTx ages out unacked entries after timeout', async () => {
@@ -315,7 +367,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -447,7 +499,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -607,7 +659,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });
@@ -620,7 +672,7 @@ describe('SessionController', () => {
     assert.equal(cmdtx[1]?.payload, undefined);
   });
 
-  it('attributes RAW_TX during executeCommand to source=command, ACK inherits', async () => {
+  it('attributes RAW_TX during executeCommand to source=command, and pastes ACK metadata onto the TX group', async () => {
     const { lares, subs } = stubLaresAndSocket();
     let captured: ((raw: string) => void) | undefined;
     const stubSocket: { send: (cmd: string, ptype: string, payload: Record<string, unknown>) => void;
@@ -642,7 +694,7 @@ describe('SessionController', () => {
     };
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket: stubSocket };
       },
     });
@@ -653,9 +705,13 @@ describe('SessionController', () => {
     assert.ok(tx.every((e) => e.source === 'command'),
       'all RAW_TX from inside executeCommand attribute to command');
     subs[0]({ type: 'response', message: '{"ID":"77","PAYLOAD":{"RESULT":"OK"}}' });
-    const ack = c.snapshot().logEntries.find((e) => e.tag === 'ACK');
-    assert.ok(ack);
-    assert.equal(ack?.source, 'command', 'ACK inherits source from matched pendingTx');
+    const snap = c.snapshot();
+    // Paired ACK no longer emits its own row; the TX group carries the ack metadata.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
+    const txWithAck = snap.logEntries.find((e) => e.tag === 'RAW_TX' && e.correlationId === '77');
+    assert.ok(txWithAck, 'expected TX entry for ID=77');
+    assert.equal(txWithAck?.source, 'command', 'TX still attributes to command');
+    assert.equal(txWithAck?.ack?.result, 'OK', 'ACK result pasted onto TX entry');
   });
 
   it('socket change events attribute to source=lifecycle', async () => {
@@ -675,7 +731,7 @@ describe('SessionController', () => {
     let captured: ((raw: string) => void) | undefined;
     const c = new SessionController({
       createClient: async (_env, options) => {
-        captured = options?.onSocketSend;
+        captured = adaptSend(options?.onSocketSend);
         return { lares: lares as never, socket };
       },
     });

@@ -8,7 +8,7 @@ import { executeCommand } from '../../core/command-router.js';
 import type { EventFilter, LogEntry, LogSource, LogTag, OutputFormat } from '../../core/types.js';
 import { nowIso, safeJson, formatOutput, formatUnknownError, isPlaceholderErrorMessage, shouldPrint } from '../../core/utils.js';
 import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
-import type { SocketCloseInfo, SocketErrorInfo } from '../../infra/lares4-logger.js';
+import type { SocketCloseInfo, SocketErrorInfo, SocketFrame } from '../../infra/lares4-logger.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
 import { CommandHistory } from '../../core/history.js';
 import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
@@ -24,6 +24,18 @@ import { createReadOnlyGuard, ReadOnlyBlockedError } from './read-only-guard.js'
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
 const PENDING_TX_TIMEOUT_MS = 30_000;
+
+function extractAckResult(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const inner = (payload as Record<string, unknown>).PAYLOAD;
+  if (!inner || typeof inner !== 'object' || Array.isArray(inner)) return undefined;
+  const obj = inner as Record<string, unknown>;
+  const detail = obj.RESULT_DETAIL;
+  if (typeof detail === 'string' && detail.length > 0) return detail;
+  const result = obj.RESULT;
+  if (typeof result === 'string' && result.length > 0) return result;
+  return undefined;
+}
 
 export interface ConnectInput {
   ip: string;
@@ -327,8 +339,8 @@ export class SessionController {
     try {
       const factory = this.deps.createClient ?? createLaresClient;
       const client = await factory(input, {
-        onSocketSend: (raw) => this.recordSent(raw),
-        onSocketReceive: (raw) => this.recordReceived(raw),
+        onSocketSend: (frame) => this.recordSent(frame),
+        onSocketReceive: (frame) => this.recordReceived(frame),
         onSocketError: (info) => { this.lastSocketError = info; },
         onSocketClose: (info) => { this.lastSocketClose = info; },
       });
@@ -755,27 +767,41 @@ export class SessionController {
       const { text, payload } = this.coerceEventMessage(event.message);
       const correlation = this.correlateAck(payload);
       if (correlation) {
+        const ackResult = extractAckResult(payload);
         this.store.patchByGroupId(`rawtx-${correlation.cmdId}`, {
           correlationId: correlation.cmdId,
           latencyMs: correlation.latencyMs,
+          ack: {
+            result: ackResult,
+            latencyMs: correlation.latencyMs,
+            payload,
+            ts: new Date().toISOString(),
+          },
         });
       }
-      if (shouldPrint(this.eventFilters, 'acks')) {
+      // Suppress the standalone ACK row when paired with a TX (the suffix chip on the
+      // RAW_TX row replaces it). Orphan ACKs still get their own row so they remain visible.
+      if (!correlation && shouldPrint(this.eventFilters, 'acks')) {
         this.store.push({
           level: 'info',
           tag: 'ACK',
-          source: correlation?.source ?? 'lifecycle',
+          source: 'lifecycle',
           message: text,
           payload,
-          correlationId: correlation?.cmdId,
-          latencyMs: correlation?.latencyMs,
         });
         pushed = true;
       }
     } else if (event.type === 'change' && shouldPrint(this.eventFilters, 'changes')) {
       const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'info', tag: 'CHANGE', source: 'lifecycle', message: text, payload });
-      pushed = true;
+      const isAckBody =
+        payload !== null
+        && typeof payload === 'object'
+        && !Array.isArray(payload)
+        && 'RESULT' in (payload as Record<string, unknown>);
+      if (!isAckBody) {
+        this.store.push({ level: 'info', tag: 'CHANGE', source: 'lifecycle', message: text, payload });
+        pushed = true;
+      }
     } else if (event.type === 'multi_types' && shouldPrint(this.eventFilters, 'multitypes')) {
       const { text, payload } = this.coerceEventMessage(event.message);
       this.store.push({ level: 'info', tag: 'BULK', source: 'lifecycle', message: text, payload });
@@ -785,7 +811,7 @@ export class SessionController {
     this.emit();
   }
 
-  private correlateAck(payload: unknown): { cmdId: string; latencyMs: number; source: LogSource } | undefined {
+  private correlateAck(payload: unknown, nowTs: number = Date.now()): { cmdId: string; latencyMs: number; source: LogSource } | undefined {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
     const obj = payload as Record<string, unknown>;
     const inner = obj.PAYLOAD && typeof obj.PAYLOAD === 'object' && !Array.isArray(obj.PAYLOAD)
@@ -798,7 +824,7 @@ export class SessionController {
       const pending = this.pendingTx.get(cmdId);
       if (pending) {
         this.pendingTx.delete(cmdId);
-        const resolved = { cmdId, latencyMs: Math.max(0, Date.now() - pending.sentAtMs), source: pending.source };
+        const resolved = { cmdId, latencyMs: Math.max(0, nowTs - pending.sentAtMs), source: pending.source };
         this.rememberResolvedCorrelation(resolved);
         return resolved;
       }
@@ -825,7 +851,7 @@ export class SessionController {
     }
     if (!oldest) return undefined;
     this.pendingTx.delete(oldest.id);
-    const resolved = { cmdId: oldest.id, latencyMs: Math.max(0, Date.now() - oldest.sentAtMs), source: oldest.source };
+    const resolved = { cmdId: oldest.id, latencyMs: Math.max(0, nowTs - oldest.sentAtMs), source: oldest.source };
     this.rememberResolvedCorrelation(resolved);
     return resolved;
   }
@@ -883,19 +909,20 @@ export class SessionController {
     } catch { /* ignore */ }
   }
 
-  private recordSent(raw: string): void {
+  private recordSent(frame: SocketFrame): void {
+    const { raw, ts } = frame;
     let payload: unknown;
     try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
     const cmdObj = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined;
     const cmdName = typeof cmdObj?.CMD === 'string' ? cmdObj.CMD : 'CMD';
     const payloadType = typeof cmdObj?.PAYLOAD_TYPE === 'string' ? cmdObj.PAYLOAD_TYPE : undefined;
     const hasRealId = cmdObj?.ID !== undefined;
-    const cmdId = hasRealId ? String(cmdObj?.ID) : `t${String(Date.now())}`;
+    const cmdId = hasRealId ? String(cmdObj?.ID) : `t${String(ts)}`;
     const groupId = `rawtx-${cmdId}`;
     const correlationId = hasRealId ? cmdId : undefined;
     const source: LogSource = this.commandSourceDepth > 0 ? 'command' : 'wire';
     if (hasRealId) {
-      this.pendingTx.set(cmdId, { sentAtMs: Date.now(), txGroupId: groupId, cmd: cmdName, payloadType, source });
+      this.pendingTx.set(cmdId, { sentAtMs: ts, txGroupId: groupId, cmd: cmdName, payloadType, source });
       this.sweepPendingTx();
     }
     if (!shouldPrint(this.eventFilters, 'sent')) {
@@ -909,22 +936,34 @@ export class SessionController {
     this.emit();
   }
 
-  private recordReceived(raw: string): void {
+  private recordReceived(frame: SocketFrame): void {
+    const { raw, ts } = frame;
     let payload: unknown;
     try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
-    const correlation = this.correlateAck(payload);
+    const correlation = this.correlateAck(payload, ts);
     if (correlation) {
+      const ackResult = extractAckResult(payload);
       this.store.patchByGroupId(`rawtx-${correlation.cmdId}`, {
         correlationId: correlation.cmdId,
         latencyMs: correlation.latencyMs,
+        ack: {
+          result: ackResult,
+          latencyMs: correlation.latencyMs,
+          payload,
+          ts: new Date(ts).toISOString(),
+        },
       });
+      // Suppress the duplicate RAW_RX row: the suffix chip on the TX entry plus the
+      // AckSection in LogDetailPane already surface this frame in full.
+      this.emit();
+      return;
     }
     if (!shouldPrint(this.eventFilters, 'raw')) {
       this.emit();
       return;
     }
     const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
-    const source: LogSource = correlation?.source ?? 'wire';
+    const source: LogSource = 'wire';
     this.store.push({ level: 'debug', tag: 'RAW_RX', source, message: text, payload });
     this.runTriggersForLatest();
     this.emit();

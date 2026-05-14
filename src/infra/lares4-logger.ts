@@ -8,8 +8,15 @@ export const defaultLogger: GenericLogger = {
   debug: (msg) => console.debug(msg),
 };
 
-export type SocketSendListener = (raw: string) => void;
-export type SocketReceiveListener = (raw: string) => void;
+/** Wire-layer frame event with the timestamp captured at the moment of send/receive. */
+export interface SocketFrame {
+  raw: string;
+  /** Epoch ms captured at the wire boundary (more accurate than post-event-loop `Date.now()`). */
+  ts: number;
+}
+
+export type SocketSendListener = (frame: SocketFrame) => void;
+export type SocketReceiveListener = (frame: SocketFrame) => void;
 
 export interface SocketErrorInfo {
   url: string;
@@ -47,8 +54,9 @@ export function createSocketEmitter(): SocketEmitter {
     const origSend = ws.send.bind(ws);
     ws.send = ((data: Parameters<WebSocket['send']>[0]) => {
       if (typeof data === 'string' && sendListeners.size > 0) {
+        const frame: SocketFrame = { raw: data, ts: Date.now() };
         for (const listener of sendListeners) {
-          try { listener(data); } catch { /* never break the send path */ }
+          try { listener(frame); } catch { /* never break the send path */ }
         }
       }
       origSend(data);
@@ -56,8 +64,9 @@ export function createSocketEmitter(): SocketEmitter {
 
     ws.addEventListener('message', (event) => {
       if (typeof event.data === 'string' && receiveListeners.size > 0) {
+        const frame: SocketFrame = { raw: event.data, ts: Date.now() };
         for (const listener of receiveListeners) {
-          try { listener(event.data); } catch { /* never break receive path */ }
+          try { listener(frame); } catch { /* never break receive path */ }
         }
       }
     });

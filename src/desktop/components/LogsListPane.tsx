@@ -7,9 +7,12 @@ import {
   ArrowDownLeft,
   ArrowDownToLine,
   ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
   CornerDownLeft,
   Info,
   Layers,
+  Pause,
   Pin,
   Star,
   Terminal,
@@ -26,6 +29,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { LogTagChip } from './LogTagChip.js';
+import { ackResultChipClasses } from '../runtime/status-chips.js';
 
 const TAIL_THRESHOLD_PX = 24;
 
@@ -73,6 +77,15 @@ export function LogsListPane({
   const { snapshot } = useSessionController();
   const connected = snapshot.connected;
   const [followTail, setFollowTail] = useState<boolean>(true);
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const reduceMotion = useReducedMotion();
   const animateFromIndex = (idx: number, total: number) => !reduceMotion && idx >= total - ROW_ENTER_CAP;
 
@@ -89,7 +102,8 @@ export function LogsListPane({
     if (searchTerms.length === 0) return undefined;
     const map = new Map<string, boolean>();
     for (const it of items) {
-      const haystack = `${it.preview}\n${JSON.stringify(it.payload ?? '')}`.toLowerCase();
+      const childText = it.children?.map((c) => c.line).join('\n') ?? '';
+      const haystack = `${it.preview}\n${childText}\n${JSON.stringify(it.payload ?? '')}`.toLowerCase();
       map.set(it.id, searchTerms.some((t) => haystack.includes(t)));
     }
     return map;
@@ -242,6 +256,8 @@ export function LogsListPane({
                   searchTerms={searchTerms}
                   searchMatch={matchByItemId?.get(item.id)}
                   animateEnter={animateFromIndex(idx, items.length)}
+                  expanded={expandedIds.has(item.id)}
+                  onToggleExpand={toggleExpand}
                   onSelect={onSelect}
                   onToggleBookmark={onToggleBookmark}
                   onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
@@ -250,17 +266,27 @@ export function LogsListPane({
             </div>
           </ScrollArea>
         )}
-        {!followTail && items.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+        {connected && items.length > 0 && (
+          <div className="border-border/60 bg-pane/80 flex shrink-0 items-center justify-center border-t px-2 py-1.5 backdrop-blur">
             <Button
               type="button"
               size="sm"
-              variant="default"
-              className="pointer-events-auto h-7 gap-1.5 rounded-full px-3 text-xs shadow-md"
-              onClick={() => setFollowTail(true)}
+              variant={followTail ? 'secondary' : 'default'}
+              aria-pressed={followTail}
+              className="h-7 gap-1.5 rounded-full px-3 text-xs shadow-sm"
+              onClick={() => setFollowTail((v) => !v)}
             >
-              <ArrowDownToLine className="size-3.5" aria-hidden />
-              Jump to live
+              {followTail ? (
+                <>
+                  <Pause className="size-3.5" aria-hidden />
+                  Pause
+                </>
+              ) : (
+                <>
+                  <ArrowDownToLine className="size-3.5" aria-hidden />
+                  Jump to live
+                </>
+              )}
             </Button>
           </div>
         )}
@@ -280,9 +306,11 @@ interface RowProps {
   searchTerms: string[];
   searchMatch?: boolean;
   animateEnter?: boolean;
+  expanded?: boolean;
   onSelect: (id: string) => void;
   onToggleBookmark: (id: string) => void;
   onTogglePin: () => void;
+  onToggleExpand?: (id: string) => void;
 }
 
 function escapeRegex(s: string): string {
@@ -321,6 +349,7 @@ function Row({
   item, selected, bookmarked, pinned, rowIdPrefix, meta,
   annotationsLicensed,
   searchTerms, searchMatch, animateEnter,
+  expanded, onToggleExpand,
   onSelect, onToggleBookmark, onTogglePin,
 }: RowProps) {
   const isError = item.tag === 'ERROR';
@@ -329,7 +358,10 @@ function Row({
   const hasSearch = searchTerms.length > 0;
   const isMatch = hasSearch && searchMatch === true;
   const isDimmed = hasSearch && searchMatch === false;
+  const hasChildren = (item.children?.length ?? 0) > 0;
+  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
+    <>
     <motion.div
       id={`${rowIdPrefix}-${item.id}`}
       role="option"
@@ -339,7 +371,7 @@ function Row({
       transition={animateEnter ? { duration: 0.12, ease: [0.22, 1, 0.36, 1] } : undefined}
       className={cn(
         'hover:bg-muted/80 group relative grid min-h-9 w-full cursor-pointer items-center gap-x-3 rounded-lg border border-transparent pr-2 pl-3 py-1 text-left transition-[opacity,background-color,box-shadow]',
-        'grid-cols-[1rem_minmax(4rem,max-content)_4.5rem_1fr_auto]',
+        'grid-cols-[1rem_minmax(4rem,max-content)_4.5rem_minmax(0,1fr)_auto_auto]',
         isError && !selected && 'bg-red-50/60 dark:bg-red-950/30',
         highlightCls && !selected && highlightCls,
         selected && 'shadow-sm',
@@ -365,25 +397,54 @@ function Row({
         {formatLogClock(item.ts)}
       </span>
       <span
-        className="min-w-0 truncate text-row leading-snug"
+        className="min-w-0 truncate text-row leading-snug flex items-center"
         style={{
           maskImage: 'linear-gradient(to right, black 92%, transparent)',
           WebkitMaskImage: 'linear-gradient(to right, black 92%, transparent)',
         }}
       >
-        {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
-        {item.repeat !== undefined && item.repeat > 1 && (
-          <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">×{item.repeat}</span>
+        {hasChildren && onToggleExpand && (
+          <button
+            type="button"
+            aria-label={expanded ? 'Collapse items' : 'Expand items'}
+            aria-expanded={expanded}
+            className="text-muted-foreground hover:text-foreground mr-1 shrink-0 rounded p-0.5"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleExpand(item.id);
+            }}
+          >
+            <Chevron className="size-3.5" aria-hidden />
+          </button>
         )}
-        {meta?.latencyMs !== undefined && (
+        <span className="min-w-0 truncate">
+          {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
+          {item.repeat !== undefined && item.repeat > 1 && (
+            <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">×{item.repeat}</span>
+          )}
+        </span>
+      </span>
+      <div className="flex shrink-0 items-center">
+        {item.ack ? (
           <span
-            className="bg-muted/70 text-muted-foreground border-border/50 ml-1.5 inline-flex items-center gap-0.5 rounded border px-1 py-0 align-middle font-mono text-meta tabular-nums"
+            className={cn(
+              'shrink-0 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.7rem] uppercase tracking-wide leading-tight tabular-nums',
+              ackResultChipClasses(item.ack.result),
+            )}
+            title={`ACK ${item.ack.result ?? ''}${item.ack.latencyMs !== undefined ? ` · ${item.ack.latencyMs}ms` : ''}`.trim()}
+          >
+            <span className="font-semibold">{item.ack.result ?? 'ACK'}</span>
+            {item.ack.latencyMs !== undefined && <span className="font-normal">{item.ack.latencyMs}ms</span>}
+          </span>
+        ) : meta?.latencyMs !== undefined ? (
+          <span
+            className="bg-muted/70 text-muted-foreground border-border/50 shrink-0 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.7rem] uppercase tracking-wide leading-tight tabular-nums"
             title="Round-trip latency"
           >
             {meta.latencyMs}ms
           </span>
-        )}
-      </span>
+        ) : null}
+      </div>
       <div
         className={cn(
           'flex shrink-0 items-center gap-0.5 transition-opacity focus-within:opacity-100',
@@ -446,6 +507,14 @@ function Row({
         )}
       </div>
     </motion.div>
+    {hasChildren && expanded && (
+      <div role="presentation" className="text-muted-foreground border-border/40 ml-[7.5rem] mt-0.5 mb-1 flex flex-col gap-0.5 border-l py-1 pl-3 font-mono text-row leading-snug">
+        {item.children!.map((child) => (
+          <div key={child.key} className="truncate">{child.line}</div>
+        ))}
+      </div>
+    )}
+    </>
   );
 }
 
