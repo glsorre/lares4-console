@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { TabsController } from '../controller.js';
 import { DesktopProfilesRepository } from '@/desktop/runtime/profiles-repository-desktop.js';
+import {
+  setFeatureLicense,
+  __resetTokenStoreForTests,
+} from '@/desktop/runtime/commercial-license-prefs.js';
 
 function stubRepo(): DesktopProfilesRepository {
   return new DesktopProfilesRepository({
@@ -120,5 +124,30 @@ describe('TabsController', () => {
     c.addTab();
     const secondCtl = c.activeController();
     assert.notEqual(firstCtl, secondCtl);
+  });
+
+  it('re-emits when a license-change broadcast fires', () => {
+    __resetTokenStoreForTests();
+    const c = makeController(false);
+    let calls = 0;
+    const unsub = c.subscribe(() => { calls += 1; });
+    setFeatureLicense('tabs', 'RAW');
+    setFeatureLicense('tabs', null);
+    unsub();
+    c.dispose();
+    __resetTokenStoreForTests();
+    assert.ok(calls >= 2, 'tabs controller emits on license change');
+  });
+
+  it('dispose() unwires the license-change subscription', () => {
+    __resetTokenStoreForTests();
+    const c = makeController(false);
+    let calls = 0;
+    const unsub = c.subscribe(() => { calls += 1; });
+    c.dispose();
+    setFeatureLicense('tabs', 'RAW');
+    unsub();
+    __resetTokenStoreForTests();
+    assert.equal(calls, 0, 'no emits after dispose');
   });
 });

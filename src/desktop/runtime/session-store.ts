@@ -21,6 +21,7 @@ export const INITIAL_SESSION_SNAPSHOT: SessionSnapshot = {
   recordingMacro: false,
   recordingMacroSteps: 0,
   topology: { groups: [], total: 0 },
+  topologyDiff: { addedIds: new Set(), removedIds: new Set() },
   bookmarks: [],
   triggers: [],
   pendingTxCount: 0,
@@ -92,6 +93,10 @@ export function useBookmarks(): SessionSnapshot['bookmarks'] {
 
 export function useTopology(): SessionSnapshot['topology'] {
   return useSessionStore((s) => s.topology);
+}
+
+export function useTopologyDiff(): SessionSnapshot['topologyDiff'] {
+  return useSessionStore((s) => s.topologyDiff);
 }
 
 export function useLicensed(): SessionSnapshot['licensed'] {

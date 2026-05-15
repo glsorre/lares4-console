@@ -1,27 +1,20 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import * as v from 'valibot';
+import {
+  ConnectionProfileSchema,
+  ProfilesFileSchema,
+  emptyProfilesFile,
+  quarantineSuffix,
+  type ConnectionProfile,
+  type LoadError,
+  type ProfilesFile,
+} from './profiles-schema.js';
 
-export interface ConnectionProfile {
-  name: string;
-  ip: string;
-  pin: string;
-  wss: boolean;
-  sender: string;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { ConnectionProfile, LoadError, ProfilesFile };
 
-interface ProfilesFile {
-  version: 1;
-  defaultProfile?: string;
-  profiles: ConnectionProfile[];
-}
-
-const DEFAULT_FILE: ProfilesFile = {
-  version: 1,
-  profiles: [],
-};
+export type ProfilesFileWithLoadError = ProfilesFile & { loadError?: LoadError };
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -42,27 +35,43 @@ export class ProfilesRepository {
     return this.filePath;
   }
 
-  async readAll(): Promise<ProfilesFile> {
+  async readAll(): Promise<ProfilesFileWithLoadError> {
+    let raw: string;
     try {
-      const raw = await readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<ProfilesFile>;
-      const profiles = Array.isArray(parsed.profiles) ? parsed.profiles.filter((p): p is ConnectionProfile => {
-        return typeof p?.name === 'string'
-          && typeof p?.ip === 'string'
-          && typeof p?.pin === 'string'
-          && typeof p?.wss === 'boolean'
-          && typeof p?.sender === 'string'
-          && typeof p?.createdAt === 'string'
-          && typeof p?.updatedAt === 'string';
-      }) : [];
-      return {
-        version: 1,
-        defaultProfile: typeof parsed.defaultProfile === 'string' ? parsed.defaultProfile : undefined,
-        profiles,
-      };
+      raw = await readFile(this.filePath, 'utf8');
     } catch {
-      return { ...DEFAULT_FILE };
+      return emptyProfilesFile();
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return await this.handleCorrupt(`Profiles file unreadable: ${detail}`);
+    }
+
+    const result = v.safeParse(ProfilesFileSchema, parsed);
+    if (!result.success) {
+      const detail = v.summarize(result.issues);
+      return await this.handleCorrupt(`Profiles file schema mismatch: ${detail}`);
+    }
+    return result.output;
+  }
+
+  private async handleCorrupt(reason: string): Promise<ProfilesFileWithLoadError> {
+    let quarantinedTo: string | undefined;
+    try {
+      const suffix = quarantineSuffix();
+      const targetName = `profiles.corrupt-${suffix}.json`;
+      const target = join(dirname(this.filePath), targetName);
+      await rename(this.filePath, target);
+      quarantinedTo = targetName;
+    } catch {
+      // Quarantine failed (file already gone, etc.) — surface schema/parse error
+      // without quarantinedTo so the caller still gets a non-fatal load result.
+    }
+    return { ...emptyProfilesFile(), loadError: { reason, quarantinedTo } };
   }
 
   private async writeAll(data: ProfilesFile): Promise<void> {
@@ -98,7 +107,7 @@ export class ProfilesRepository {
     const ts = nowIso();
     const index = data.profiles.findIndex((p) => p.name === input.name);
     const prev = index >= 0 ? data.profiles[index] : undefined;
-    const profile: ConnectionProfile = {
+    const profile = v.parse(ConnectionProfileSchema, {
       name: input.name,
       ip: input.ip,
       pin: input.pin,
@@ -106,13 +115,13 @@ export class ProfilesRepository {
       sender: input.sender,
       createdAt: prev?.createdAt ?? ts,
       updatedAt: ts,
-    };
+    });
     if (index >= 0) data.profiles[index] = profile;
     else data.profiles.push(profile);
     if (input.makeDefault || !data.defaultProfile) {
       data.defaultProfile = profile.name;
     }
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
     return profile;
   }
 
@@ -125,7 +134,7 @@ export class ProfilesRepository {
     if (data.defaultProfile === name) {
       data.defaultProfile = next[0]?.name;
     }
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
     return true;
   }
 
@@ -133,7 +142,11 @@ export class ProfilesRepository {
     const data = await this.readAll();
     if (!data.profiles.some((p) => p.name === name)) return false;
     data.defaultProfile = name;
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
     return true;
   }
+}
+
+function stripLoadError(data: ProfilesFileWithLoadError): ProfilesFile {
+  return { version: 1, defaultProfile: data.defaultProfile, profiles: data.profiles };
 }

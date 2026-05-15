@@ -40,6 +40,22 @@ fn write_profiles_file(content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn quarantine_profiles_file(suffix: String) -> Result<String, String> {
+    let path = profiles_path()?;
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    let target_name = format!("profiles.corrupt-{suffix}.json");
+    let target = path
+        .parent()
+        .ok_or_else(|| String::from("Profiles file has no parent directory"))?
+        .join(&target_name);
+    fs::rename(&path, &target)
+        .map_err(|error| format!("Failed to quarantine profiles file: {error}"))?;
+    Ok(target_name)
+}
+
+#[tauri::command]
 fn read_utf8_file(path: String) -> Result<String, String> {
     fs::read_to_string(path).map_err(|error| format!("Failed to read file: {error}"))
 }
@@ -123,6 +139,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_profiles_file,
             write_profiles_file,
+            quarantine_profiles_file,
             read_utf8_file,
             write_utf8_file,
             resolve_default_session_path,

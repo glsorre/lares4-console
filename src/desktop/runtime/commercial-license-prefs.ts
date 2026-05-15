@@ -76,6 +76,58 @@ function warnUnboostrapped(): void {
   }
 }
 
+const licenseListeners = new Set<() => void>();
+const inFlightVerify = new Set<string>();
+
+/**
+ * Subscribe to license-state changes (bootstrap finish, save, clear, and
+ * lazy-verify completions). If bootstrap has already finished by the time the
+ * caller subscribes, the listener is invoked once on the next microtask so the
+ * caller gets a chance to re-snapshot — this handles the race where the
+ * controllers attach AFTER bootstrap's broadcast has already gone out.
+ */
+export function subscribeLicenseChange(listener: () => void): () => void {
+  licenseListeners.add(listener);
+  if (bootstrapped) {
+    queueMicrotask(() => {
+      if (licenseListeners.has(listener)) listener();
+    });
+  }
+  return () => licenseListeners.delete(listener);
+}
+
+function notifyLicenseChange(): void {
+  for (const listener of licenseListeners) {
+    try {
+      listener();
+    } catch {
+      /* one bad listener must not kill the others */
+    }
+  }
+}
+
+/**
+ * Fire-and-forget verify for a known raw token whose payload isn't in the
+ * cache. Used by `isFeatureLicensed` to self-heal when `bootstrapLicenses`
+ * silently failed (e.g. Tauri IPC wasn't ready in the first frames). On
+ * success, broadcasts a license-change so subscribers re-snapshot.
+ */
+function lazyEnsureVerified(raw: string, probe: FeatureId): void {
+  if (inFlightVerify.has(raw)) return;
+  if (peekVerifyResult(raw)) return;
+  inFlightVerify.add(raw);
+  verifyLicense(raw, probe)
+    .then((res) => {
+      if (res.ok) notifyLicenseChange();
+    })
+    .catch((err) => {
+      console.warn('[license] lazy verify failed:', err);
+    })
+    .finally(() => {
+      inFlightVerify.delete(raw);
+    });
+}
+
 function getFeatureRaw(id: FeatureId): string | null {
   return tokenStore.get(id) ?? null;
 }
@@ -107,6 +159,7 @@ export function setFeatureLicense(id: FeatureId, key: string | null): void {
     tokenStore.delete(id);
     void transport.clear(id).catch(() => undefined);
   }
+  notifyLicenseChange();
 }
 
 /** Persist a raw bundle (`f: "*"`) token. */
@@ -122,6 +175,7 @@ export function setBundleLicense(key: string | null): void {
     tokenStore.delete('bundle');
     void transport.clear('bundle').catch(() => undefined);
   }
+  notifyLicenseChange();
 }
 
 function isNotExpired(p: LicensePayload): boolean {
@@ -143,6 +197,14 @@ export function isFeatureLicensed(id: FeatureId): boolean {
   if (direct?.ok && (direct.payload.f === id || direct.payload.f === '*') && isNotExpired(direct.payload)) {
     return true;
   }
+  // Cache miss but a token exists in the mirror — bootstrap may have silently
+  // failed (Tauri IPC not ready, HMR, etc.). Kick off a background verify so
+  // the next render after it resolves sees the populated cache. This call
+  // still returns false synchronously; the broadcast does the unlock.
+  const bundleRaw = getBundleRaw();
+  if (bundleRaw) lazyEnsureVerified(bundleRaw, 'macros');
+  const directRaw = getFeatureRaw(id);
+  if (directRaw) lazyEnsureVerified(directRaw, id);
   return false;
 }
 
@@ -225,8 +287,8 @@ export async function bootstrapLicenses(): Promise<void> {
   let stored: Record<string, string> = {};
   try {
     stored = await transport.readAll();
-  } catch {
-    /* keychain unreachable — leave the mirror empty */
+  } catch (err) {
+    console.warn('[license] keychain readAll failed:', err);
   }
   const alreadyMigrated = stored[MIGRATED_MARKER] === '1' || stored[MIGRATED_MARKER] === 'true';
   for (const [slot, raw] of Object.entries(stored)) {
@@ -235,17 +297,22 @@ export async function bootstrapLicenses(): Promise<void> {
   }
   await Promise.all(
     Array.from(tokenStore.entries()).map(([slot, raw]) =>
-      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch(() => undefined),
+      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch((err) => {
+        console.warn(`[license] verify failed during bootstrap (slot=${slot}):`, err);
+      }),
     ),
   );
   await migrateFromLocalStorageOnce(alreadyMigrated);
   // Reverify any tokens introduced by the migration step.
   await Promise.all(
     Array.from(tokenStore.entries()).map(([slot, raw]) =>
-      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch(() => undefined),
+      verifyLicense(raw, slot === 'bundle' ? 'macros' : (slot as FeatureId)).catch((err) => {
+        console.warn(`[license] re-verify failed during bootstrap (slot=${slot}):`, err);
+      }),
     ),
   );
   bootstrapped = true;
+  notifyLicenseChange();
 }
 
 /**
@@ -283,6 +350,7 @@ export async function verifyAndSaveFeatureLicense(
   }
   // Prime the verify cache so the sync accessors see the new payload.
   await verifyLicense(trimmed, featureId);
+  notifyLicenseChange();
   return result;
 }
 
@@ -304,4 +372,6 @@ export function __resetTokenStoreForTests(): void {
   tokenStore.clear();
   bootstrapped = false;
   warnedUnbootstrapped = false;
+  licenseListeners.clear();
+  inFlightVerify.clear();
 }

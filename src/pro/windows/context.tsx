@@ -19,7 +19,7 @@ export function WindowsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = controller.subscribe(() => setSnapshot(controller.snapshot()));
-    return () => { unsub(); controller.dispose(); };
+    return () => { unsub(); };
   }, [controller]);
 
   const value = useMemo<WindowsContextValue>(() => ({ controller, snapshot }), [controller, snapshot]);

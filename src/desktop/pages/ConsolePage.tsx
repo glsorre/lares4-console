@@ -34,6 +34,7 @@ import {
   useMacrosSlice,
   useOutputFormat,
   useTopology,
+  useTopologyDiff,
   useTriggers,
 } from '../runtime/session-store.js';
 import { compileChipFilters } from '../../core/log-query.js';
@@ -74,6 +75,7 @@ export function ConsolePage() {
   const bookmarks = useBookmarks();
   const triggers = useTriggers();
   const topology = useTopology();
+  const topologyDiff = useTopologyDiff();
   const licensed = useLicensed();
   const outputFormat = useOutputFormat();
   const activeProfileName = useActiveProfileName();
@@ -520,6 +522,10 @@ export function ConsolePage() {
         recentDeviceIds={recentDeviceIds}
         filter={topologyFilter}
         onFilterChange={setTopologyFilter}
+        addedIds={topologyDiff.addedIds}
+        removedIds={topologyDiff.removedIds}
+        onRefresh={runStateAll}
+        canRefresh={connected}
       />
     </div>
   );

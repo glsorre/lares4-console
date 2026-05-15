@@ -1,114 +1,33 @@
-import { readProfilesFile, writeProfilesFile } from './tauri-fs.js';
+import * as v from 'valibot';
+import { quarantineProfilesFile, readProfilesFile, writeProfilesFile } from './tauri-fs.js';
+import {
+  ConnectionProfileSchema,
+  ProfilesFileSchema,
+  emptyProfilesFile,
+  quarantineSuffix,
+  type ConnectionProfile,
+  type LoadError,
+  type ProfilesFile,
+} from '../../core/profiles-schema.js';
 import type { LogTag } from '../../core/types.js';
-import type { Macro, MacroStep } from '@pro/macros/types.js';
-import type { TriggerAction, TriggerActionKind, TriggerRule, HighlightColor } from '@pro/triggers/types.js';
+import type { Macro } from '@pro/macros/types.js';
+import type { TriggerRule } from '@pro/triggers/types.js';
+
+export type { ConnectionProfile, ProfilesFile, LoadError };
 
 export interface ProfilesPersistence {
   read: () => Promise<string | null>;
   write: (content: string) => Promise<void>;
+  quarantine?: (suffix: string) => Promise<string>;
 }
 
 const defaultPersistence: ProfilesPersistence = {
   read: readProfilesFile,
   write: writeProfilesFile,
+  quarantine: quarantineProfilesFile,
 };
 
-const VALID_TAGS: ReadonlySet<LogTag> = new Set([
-  'ACK', 'RAW_RX', 'RAW_TX', 'BULK', 'CHANGE', 'ERROR', 'LOG', 'SYSTEM',
-]);
-
-const VALID_ACTION_KINDS: ReadonlySet<TriggerActionKind> = new Set(['highlight', 'beep', 'notify', 'pause']);
-const VALID_COLORS: ReadonlySet<HighlightColor> = new Set(['red', 'amber', 'emerald', 'blue', 'violet']);
-
-function sanitizeTriggers(raw: unknown): TriggerRule[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: TriggerRule[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const r = item as Record<string, unknown>;
-    if (typeof r.id !== 'string' || typeof r.name !== 'string') continue;
-    if (typeof r.match !== 'string') continue;
-    if (!Array.isArray(r.actions)) continue;
-    const actions: TriggerAction[] = [];
-    for (const a of r.actions) {
-      if (!a || typeof a !== 'object') continue;
-      const ac = a as Record<string, unknown>;
-      if (typeof ac.kind !== 'string' || !VALID_ACTION_KINDS.has(ac.kind as TriggerActionKind)) continue;
-      const action: TriggerAction = { kind: ac.kind as TriggerActionKind };
-      if (action.kind === 'highlight' && typeof ac.color === 'string' && VALID_COLORS.has(ac.color as HighlightColor)) {
-        action.color = ac.color as HighlightColor;
-      }
-      if (action.kind === 'notify' && typeof ac.message === 'string') {
-        action.message = ac.message;
-      }
-      actions.push(action);
-    }
-    if (actions.length === 0) continue;
-    out.push({
-      id: r.id,
-      name: r.name,
-      enabled: typeof r.enabled === 'boolean' ? r.enabled : true,
-      match: r.match,
-      actions,
-    });
-  }
-  return out;
-}
-
-function sanitizeMacros(raw: unknown): Macro[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: Macro[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const m = item as Record<string, unknown>;
-    if (typeof m.id !== 'string' || typeof m.name !== 'string') continue;
-    if (typeof m.createdAt !== 'string' || typeof m.updatedAt !== 'string') continue;
-    if (!Array.isArray(m.steps)) continue;
-    const steps: MacroStep[] = [];
-    for (const s of m.steps) {
-      if (!s || typeof s !== 'object') continue;
-      const step = s as Record<string, unknown>;
-      if (typeof step.command !== 'string') continue;
-      const delay = typeof step.delayMs === 'number' && Number.isFinite(step.delayMs)
-        ? Math.max(0, Math.floor(step.delayMs))
-        : undefined;
-      steps.push(delay !== undefined ? { command: step.command, delayMs: delay } : { command: step.command });
-    }
-    out.push({
-      id: m.id,
-      name: m.name,
-      description: typeof m.description === 'string' ? m.description : undefined,
-      steps,
-      createdAt: m.createdAt,
-      updatedAt: m.updatedAt,
-    });
-  }
-  return out;
-}
-
-export interface ConnectionProfile {
-  name: string;
-  ip: string;
-  pin: string;
-  wss: boolean;
-  sender: string;
-  createdAt: string;
-  updatedAt: string;
-  logTagFilters?: LogTag[];
-  macros?: Macro[];
-  triggers?: TriggerRule[];
-  readOnly?: boolean;
-}
-
-interface ProfilesFile {
-  version: 1;
-  defaultProfile?: string;
-  profiles: ConnectionProfile[];
-}
-
-function emptyFile(): ProfilesFile {
-  return { version: 1, profiles: [] };
-}
+export type ProfilesFileWithLoadError = ProfilesFile & { loadError?: LoadError };
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -117,47 +36,38 @@ function nowIso(): string {
 export class DesktopProfilesRepository {
   constructor(private readonly persistence: ProfilesPersistence = defaultPersistence) {}
 
-  async readAll(): Promise<ProfilesFile> {
+  async readAll(): Promise<ProfilesFileWithLoadError> {
     const raw = await this.persistence.read();
-    if (!raw) return emptyFile();
+    if (!raw) return emptyProfilesFile();
+
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(raw) as Partial<ProfilesFile>;
-      const profiles = Array.isArray(parsed.profiles) ? parsed.profiles
-        .filter((p): p is ConnectionProfile => {
-          return typeof p?.name === 'string'
-            && typeof p?.ip === 'string'
-            && typeof p?.pin === 'string'
-            && typeof p?.wss === 'boolean'
-            && typeof p?.sender === 'string'
-            && typeof p?.createdAt === 'string'
-            && typeof p?.updatedAt === 'string';
-        })
-        .map((p) => {
-          const tags = Array.isArray((p as { logTagFilters?: unknown }).logTagFilters)
-            ? ((p as { logTagFilters: unknown[] }).logTagFilters)
-              .filter((t): t is LogTag => typeof t === 'string' && VALID_TAGS.has(t as LogTag))
-            : undefined;
-          const macros = sanitizeMacros((p as { macros?: unknown }).macros);
-          const triggers = sanitizeTriggers((p as { triggers?: unknown }).triggers);
-          const readOnly = typeof (p as { readOnly?: unknown }).readOnly === 'boolean'
-            ? (p as { readOnly: boolean }).readOnly
-            : undefined;
-          return {
-            ...p,
-            logTagFilters: tags,
-            macros,
-            triggers,
-            readOnly,
-          };
-        }) : [];
-      return {
-        version: 1,
-        defaultProfile: typeof parsed.defaultProfile === 'string' ? parsed.defaultProfile : undefined,
-        profiles,
-      };
-    } catch {
-      return emptyFile();
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return await this.handleCorrupt(`Profiles file unreadable: ${detail}`);
     }
+
+    const result = v.safeParse(ProfilesFileSchema, parsed);
+    if (!result.success) {
+      const detail = v.summarize(result.issues);
+      return await this.handleCorrupt(`Profiles file schema mismatch: ${detail}`);
+    }
+    return result.output;
+  }
+
+  private async handleCorrupt(reason: string): Promise<ProfilesFileWithLoadError> {
+    let quarantinedTo: string | undefined;
+    if (this.persistence.quarantine) {
+      try {
+        const renamed = await this.persistence.quarantine(quarantineSuffix());
+        if (renamed) quarantinedTo = renamed;
+      } catch {
+        // Quarantine itself failed (e.g. file already gone). Surface the original
+        // schema/parse error without the quarantinedTo hint — app still boots.
+      }
+    }
+    return { ...emptyProfilesFile(), loadError: { reason, quarantinedTo } };
   }
 
   private async writeAll(data: ProfilesFile): Promise<void> {
@@ -185,7 +95,7 @@ export class DesktopProfilesRepository {
     const ts = nowIso();
     const idx = data.profiles.findIndex((p) => p.name === input.name);
     const prev = idx >= 0 ? data.profiles[idx] : undefined;
-    const profile: ConnectionProfile = {
+    const candidate: ConnectionProfile = {
       name: input.name,
       ip: input.ip,
       pin: input.pin,
@@ -198,10 +108,11 @@ export class DesktopProfilesRepository {
       triggers: input.triggers !== undefined ? input.triggers : prev?.triggers,
       readOnly: input.readOnly !== undefined ? input.readOnly : prev?.readOnly,
     };
+    const profile = v.parse(ConnectionProfileSchema, candidate);
     if (idx >= 0) data.profiles[idx] = profile;
     else data.profiles.push(profile);
     if (input.makeDefault || !data.defaultProfile) data.defaultProfile = input.name;
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
   }
 
   async setTriggers(name: string, triggers: TriggerRule[]): Promise<void> {
@@ -209,8 +120,9 @@ export class DesktopProfilesRepository {
     const idx = data.profiles.findIndex((p) => p.name === name);
     if (idx < 0) return;
     const prev = data.profiles[idx];
-    data.profiles[idx] = { ...prev, triggers, updatedAt: nowIso() };
-    await this.writeAll(data);
+    const next = v.parse(ConnectionProfileSchema, { ...prev, triggers, updatedAt: nowIso() });
+    data.profiles[idx] = next;
+    await this.writeAll(stripLoadError(data));
   }
 
   async setLogTagFilters(name: string, filters: LogTag[] | undefined): Promise<void> {
@@ -218,8 +130,9 @@ export class DesktopProfilesRepository {
     const idx = data.profiles.findIndex((p) => p.name === name);
     if (idx < 0) return;
     const prev = data.profiles[idx];
-    data.profiles[idx] = { ...prev, logTagFilters: filters, updatedAt: nowIso() };
-    await this.writeAll(data);
+    const next = v.parse(ConnectionProfileSchema, { ...prev, logTagFilters: filters, updatedAt: nowIso() });
+    data.profiles[idx] = next;
+    await this.writeAll(stripLoadError(data));
   }
 
   async setMacros(name: string, macros: Macro[]): Promise<void> {
@@ -227,21 +140,26 @@ export class DesktopProfilesRepository {
     const idx = data.profiles.findIndex((p) => p.name === name);
     if (idx < 0) return;
     const prev = data.profiles[idx];
-    data.profiles[idx] = { ...prev, macros, updatedAt: nowIso() };
-    await this.writeAll(data);
+    const next = v.parse(ConnectionProfileSchema, { ...prev, macros, updatedAt: nowIso() });
+    data.profiles[idx] = next;
+    await this.writeAll(stripLoadError(data));
   }
 
   async remove(name: string): Promise<void> {
     const data = await this.readAll();
     data.profiles = data.profiles.filter((p) => p.name !== name);
     if (data.defaultProfile === name) data.defaultProfile = data.profiles[0]?.name;
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
   }
 
   async setDefault(name: string): Promise<void> {
     const data = await this.readAll();
     if (!data.profiles.some((p) => p.name === name)) return;
     data.defaultProfile = name;
-    await this.writeAll(data);
+    await this.writeAll(stripLoadError(data));
   }
+}
+
+function stripLoadError(data: ProfilesFileWithLoadError): ProfilesFile {
+  return { version: 1, defaultProfile: data.defaultProfile, profiles: data.profiles };
 }

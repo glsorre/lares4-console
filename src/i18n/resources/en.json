@@ -205,6 +205,9 @@
     "errNetHint": "Check the IP, that the panel is online, and the network reaches it.",
     "errValidationTitle": "Invalid input",
     "errGenericTitle": "Connection error",
+    "profilesLoadErrorTitle": "Saved profiles file could not be loaded",
+    "profilesLoadErrorBody": "Schema validation failed. Saved profiles were not loaded.",
+    "profilesLoadErrorQuarantined": "Original file moved to <strong>{{filename}}</strong>.",
     "activeConnection": "Active connection",
     "connections": "Connections",
     "newConnectionAria": "New connection",
@@ -407,7 +410,11 @@
     "runStateAllCmd": "state all",
     "filterByIdTitle": "Filter log to id:{{id}}",
     "idFallback": "id {{id}}",
-    "statusUnknown": "unknown"
+    "statusUnknown": "unknown",
+    "refreshAria": "Refresh topology",
+    "refreshTooltip": "Refresh (state all)",
+    "diffAddedAria": "{{count}} added in last 30s",
+    "diffRemovedAria": "{{count}} removed in last 30s"
   },
   "recentActivity": {
     "aria": "Recent device activity",

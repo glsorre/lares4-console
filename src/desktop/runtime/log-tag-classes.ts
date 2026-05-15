@@ -17,7 +17,7 @@ export function getTagDotClass(tag: LogTag): string {
 export function getTagClasses(tag: LogTag): string {
   switch (tag) {
     case 'ACK':    return 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300';
-    case 'CHANGE': return 'border border-amber-800 bg-amber-200 text-amber-900';
+    case 'CHANGE': return 'border border-amber-800 bg-amber-200 text-amber-900 dark:border-amber-300 dark:bg-amber-950 dark:text-amber-200';
     case 'ERROR':  return 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400';
     case 'LOG':    return 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300';
     case 'SYSTEM': return 'bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-400';

@@ -950,4 +950,133 @@ describe('SessionController', () => {
     assert.equal(coversChange?.groupId, coversRx?.groupId, 'COVERS CHANGE pairs with COVERS RAW_RX');
     assert.equal(lightsChange?.groupId, lightsRx?.groupId, 'LIGHTS CHANGE pairs with LIGHTS RAW_RX');
   });
+
+  describe('licenseChange subscription', () => {
+    it('emits a fresh snapshot when subscribeLicenseChange fires', async () => {
+      const { __resetTokenStoreForTests } = await import(
+        '../src/desktop/runtime/commercial-license-prefs.js'
+      );
+      const { __clearVerifyCacheForTests } = await import(
+        '../src/desktop/runtime/license-verify.js'
+      );
+      const { installFakeTransport } = await import(
+        './helpers/fake-license-transport.js'
+      );
+      const { setFeatureLicense } = await import(
+        '../src/desktop/runtime/commercial-license-prefs.js'
+      );
+      installFakeTransport({ pubkeysHex: [] });
+      __clearVerifyCacheForTests();
+      __resetTokenStoreForTests();
+
+      let licensed = false;
+      const c = new SessionController({
+        isMacrosLicensed: () => licensed,
+      });
+      // Initial snapshot reflects the false state.
+      assert.equal(c.snapshot().licensed.macros, false);
+
+      let emits = 0;
+      const unsub = c.subscribe(() => { emits += 1; });
+      // Toggle the closure-controlled licensed state, then trigger the
+      // license-change broadcast via the mutator. The controller should emit,
+      // and the next snapshot should reflect the new value.
+      licensed = true;
+      setFeatureLicense('macros', 'RAW');
+      unsub();
+      c.dispose();
+      assert.ok(emits >= 1, 'controller emits on license change');
+      assert.equal(c.snapshot().licensed.macros, true);
+    });
+  });
+
+  describe('topologyDiff', () => {
+    it('flags new devices as added within the 30s window and clears after', async () => {
+      const { lares, socket } = stubLaresAndSocket();
+      const mutableLights: Array<{ id: string; on: boolean; description: string }> = [];
+      (lares as unknown as { lights: typeof mutableLights }).lights = mutableLights;
+      const realNow = Date.now;
+      let now = 1_000_000_000;
+      Date.now = () => now;
+      try {
+        const c = new SessionController({
+          createClient: async () => ({ lares: lares as never, socket }),
+        });
+        await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+
+        mutableLights.push({ id: '1', on: true, description: 'Kitchen' });
+        const first = c.snapshot();
+        assert.equal(first.topologyDiff.addedIds.has('lights:1'), true, 'first sighting is added');
+        assert.equal(first.topologyDiff.removedIds.size, 0);
+
+        mutableLights.push({ id: '2', on: false, description: 'Hallway' });
+        const second = c.snapshot();
+        assert.equal(second.topologyDiff.addedIds.has('lights:1'), true);
+        assert.equal(second.topologyDiff.addedIds.has('lights:2'), true);
+
+        now += 31_000;
+        const third = c.snapshot();
+        assert.equal(third.topologyDiff.addedIds.size, 0, 'added clears after 30s window');
+        assert.equal(third.topologyDiff.removedIds.size, 0);
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('flags removed devices and clears them after the 30s window', async () => {
+      const { lares, socket } = stubLaresAndSocket();
+      const mutableLights: Array<{ id: string; on: boolean; description: string }> = [
+        { id: '1', on: true, description: 'Kitchen' },
+        { id: '2', on: false, description: 'Hallway' },
+      ];
+      (lares as unknown as { lights: typeof mutableLights }).lights = mutableLights;
+      const realNow = Date.now;
+      let now = 2_000_000_000;
+      Date.now = () => now;
+      try {
+        const c = new SessionController({
+          createClient: async () => ({ lares: lares as never, socket }),
+        });
+        await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+        c.snapshot();
+        now += 31_000; // Drift past the initial add window so both ids are stable, not added.
+        c.snapshot();
+
+        // Drop one light.
+        mutableLights.pop();
+        const after = c.snapshot();
+        assert.equal(after.topologyDiff.removedIds.has('lights:2'), true);
+        assert.equal(after.topologyDiff.addedIds.size, 0);
+
+        now += 31_000;
+        const final = c.snapshot();
+        assert.equal(final.topologyDiff.removedIds.size, 0, 'removed clears after window');
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('returns the same TopologyDiff reference when membership is unchanged', async () => {
+      const { lares, socket } = stubLaresAndSocket();
+      const mutableLights: Array<{ id: string; on: boolean; description: string }> = [
+        { id: '1', on: true, description: 'Kitchen' },
+      ];
+      (lares as unknown as { lights: typeof mutableLights }).lights = mutableLights;
+      const realNow = Date.now;
+      let now = 3_000_000_000;
+      Date.now = () => now;
+      try {
+        const c = new SessionController({
+          createClient: async () => ({ lares: lares as never, socket }),
+        });
+        await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+        now += 31_000;
+        const a = c.snapshot().topologyDiff;
+        const b = c.snapshot().topologyDiff;
+        assert.equal(a, b, 'stable membership reuses the cached diff reference');
+      } finally {
+        Date.now = realNow;
+      }
+    });
+  });
 });

@@ -9,6 +9,10 @@ export async function writeProfilesFile(content: string): Promise<void> {
   await invoke('write_profiles_file', { content });
 }
 
+export async function quarantineProfilesFile(suffix: string): Promise<string> {
+  return await invoke<string>('quarantine_profiles_file', { suffix });
+}
+
 export async function readUtf8File(path: string): Promise<string> {
   return await invoke<string>('read_utf8_file', { path });
 }

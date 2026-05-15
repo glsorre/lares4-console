@@ -3,7 +3,7 @@
 
 import { SessionController, type SessionSnapshot } from '@/desktop/runtime/session-controller.js';
 import { DesktopProfilesRepository } from '@/desktop/runtime/profiles-repository-desktop.js';
-import { isFeatureLicensed } from '@/desktop/runtime/commercial-license-prefs.js';
+import { isFeatureLicensed, subscribeLicenseChange } from '@/desktop/runtime/commercial-license-prefs.js';
 import { MAX_FREE_TABS, type Tab, type TabMeta, type TabsSnapshot } from './types.js';
 
 function generateTabId(): string {
@@ -29,6 +29,7 @@ export class TabsController {
   private readonly listeners = new Set<() => void>();
   private readonly perTabUnsubs = new Map<string, () => void>();
   private readonly isLicensed: () => boolean;
+  private unsubscribeLicenseChange: (() => void) | undefined;
 
   constructor(deps: TabsControllerDeps = {}) {
     this.profiles = deps.profiles ?? new DesktopProfilesRepository();
@@ -36,6 +37,23 @@ export class TabsController {
     const first = this.spawnTab();
     this.tabs = [first];
     this.active = first.id;
+    this.unsubscribeLicenseChange = subscribeLicenseChange(() => this.emit());
+  }
+
+  dispose(): void {
+    // Order matters: drop the per-tab → controller bridge and the global
+    // license listener BEFORE touching any tab, so cascading SessionController
+    // emits (e.g. from disconnect) can't reach our subscribers post-dispose.
+    this.unsubscribeLicenseChange?.();
+    this.unsubscribeLicenseChange = undefined;
+    for (const unsub of this.perTabUnsubs.values()) unsub();
+    this.perTabUnsubs.clear();
+    this.listeners.clear();
+    for (const tab of this.tabs) {
+      tab.controller.disconnect();
+      tab.controller.dispose();
+    }
+    this.tabs = [];
   }
 
   subscribe(listener: () => void): () => void {

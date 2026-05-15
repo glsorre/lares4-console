@@ -205,6 +205,9 @@
     "errNetHint": "Controlla l'IP, che il pannello sia online, e che la rete lo raggiunga.",
     "errValidationTitle": "Input non valido",
     "errGenericTitle": "Errore di connessione",
+    "profilesLoadErrorTitle": "Impossibile caricare il file dei profili salvati",
+    "profilesLoadErrorBody": "Validazione dello schema fallita. I profili salvati non sono stati caricati.",
+    "profilesLoadErrorQuarantined": "File originale spostato in <strong>{{filename}}</strong>.",
     "activeConnection": "Connessione attiva",
     "connections": "Connessioni",
     "newConnectionAria": "Nuova connessione",
@@ -407,7 +410,11 @@
     "runStateAllCmd": "state all",
     "filterByIdTitle": "Filtra log su id:{{id}}",
     "idFallback": "id {{id}}",
-    "statusUnknown": "sconosciuto"
+    "statusUnknown": "sconosciuto",
+    "refreshAria": "Aggiorna topologia",
+    "refreshTooltip": "Aggiorna (state all)",
+    "diffAddedAria": "{{count}} aggiunti negli ultimi 30s",
+    "diffRemovedAria": "{{count}} rimossi negli ultimi 30s"
   },
   "recentActivity": {
     "aria": "Attività recente dei dispositivi",

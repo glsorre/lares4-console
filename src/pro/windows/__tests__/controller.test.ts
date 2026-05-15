@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { WindowsController, type WindowsAdapter } from '../controller.js';
+import {
+  setFeatureLicense,
+  __resetTokenStoreForTests,
+} from '@/desktop/runtime/commercial-license-prefs.js';
 
 interface Calls {
   opened: { label: string; route: string }[];
@@ -91,6 +95,33 @@ describe('WindowsController', () => {
     emitOpen('main'); // already present, no emit
     assert.equal(calls, 0);
     emitClose('does-not-exist'); // unknown, no emit
+    assert.equal(calls, 0);
+  });
+
+  it('re-emits when a license-change broadcast fires', async () => {
+    __resetTokenStoreForTests();
+    const { adapter } = makeAdapter(['main']);
+    const c = new WindowsController({ adapter, isLicensed: () => false });
+    await waitForRefresh();
+    let calls = 0;
+    c.subscribe(() => { calls += 1; });
+    setFeatureLicense('multiwindow', 'RAW');
+    setFeatureLicense('multiwindow', null);
+    c.dispose();
+    __resetTokenStoreForTests();
+    assert.ok(calls >= 2, 'windows controller emits on license change');
+  });
+
+  it('dispose() unwires the license-change subscription', async () => {
+    __resetTokenStoreForTests();
+    const { adapter } = makeAdapter(['main']);
+    const c = new WindowsController({ adapter, isLicensed: () => false });
+    await waitForRefresh();
+    let calls = 0;
+    c.subscribe(() => { calls += 1; });
+    c.dispose();
+    setFeatureLicense('multiwindow', 'RAW');
+    __resetTokenStoreForTests();
     assert.equal(calls, 0);
   });
 });

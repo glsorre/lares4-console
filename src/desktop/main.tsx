@@ -26,9 +26,15 @@ function render(): void {
 }
 
 // Verify any stored license tokens before first render so feature gates are
-// in their correct state. Failures (no key, malformed, expired) silently
-// resolve — the gates simply stay locked.
+// in their correct state. Failures (no key, malformed, expired) resolve to a
+// console warn so the cause is visible in the dev console; the gates stay
+// locked but the system self-heals via `lazyEnsureVerified` on the next
+// `isFeatureLicensed` call.
 void Promise.all([
-  bootstrapLicenses().catch(() => undefined),
-  initI18n().catch(() => undefined),
+  bootstrapLicenses().catch((err) => {
+    console.warn('[license] bootstrap rejected:', err);
+  }),
+  initI18n().catch((err) => {
+    console.warn('[i18n] init rejected:', err);
+  }),
 ]).finally(render);

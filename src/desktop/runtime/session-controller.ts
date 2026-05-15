@@ -15,13 +15,14 @@ import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
 import { resolveDefaultSessionPath, writeUtf8File } from './tauri-fs.js';
 import type { Macro, MacroStep } from '@pro/macros/types.js';
 import { MacroEngine } from '@pro/macros/engine.js';
-import { isFeatureLicensed } from './commercial-license-prefs.js';
+import { isFeatureLicensed, subscribeLicenseChange } from './commercial-license-prefs.js';
 import { isReadOnlyMode, setReadOnlyMode, subscribeReadOnlyMode } from './read-only-prefs.js';
 import { createReadOnlyGuard, ReadOnlyBlockedError } from './read-only-guard.js';
 
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
 const PENDING_TX_TIMEOUT_MS = 30_000;
+const TOPOLOGY_DIFF_WINDOW_MS = 30_000;
 /** Upper bound on the wire-frame → typed-event pairing window. Larger than any plausible
  *  in-flight dispatch delay; smaller than the panel's ~10s heartbeat so cross-heartbeat
  *  stashes never confuse the pairer. */
@@ -75,6 +76,13 @@ export interface ActiveMacroSnapshot {
   status: 'stopped' | 'playing' | 'paused';
 }
 
+export interface TopologyDiff {
+  /** Keys are `${kind}:${id}`. */
+  addedIds: ReadonlySet<string>;
+  /** Keys are `${kind}:${id}`. */
+  removedIds: ReadonlySet<string>;
+}
+
 export interface SessionSnapshot {
   connected: boolean;
   connectionStatus: ConnectionStatus;
@@ -90,6 +98,7 @@ export interface SessionSnapshot {
   recordingMacro: boolean;
   recordingMacroSteps: number;
   topology: TopologySnapshot;
+  topologyDiff: TopologyDiff;
   bookmarks: Bookmark[];
   triggers: TriggerRule[];
   pendingTxCount: number;
@@ -186,6 +195,7 @@ export class SessionController {
   private liveStreamPaused = false;
   private readOnly = false;
   private unsubscribeReadOnly: (() => void) | undefined;
+  private unsubscribeLicenseChange: (() => void) | undefined;
   private lastSocketClose: SocketCloseInfo | undefined;
   private lastSocketError: SocketErrorInfo | undefined;
   /** Snapshot-stability caches. Selector hooks rely on identity equality to skip
@@ -200,6 +210,13 @@ export class SessionController {
   private cachedLogEntriesVersion = -1;
   private cachedBookmarks: Bookmark[] = [];
   private cachedBookmarksVersion = -1;
+  /** Per-key membership history for `topologyDiff` (key = `${kind}:${id}`).
+   *  `firstSeen` is the first wall-clock time the key appeared in a topology snapshot;
+   *  `lastSeen` is the most recent. Entries older than `2 * TOPOLOGY_DIFF_WINDOW_MS`
+   *  are pruned in `computeTopology()` to bound the map. */
+  private readonly topologyHistory = new Map<string, { firstSeen: number; lastSeen: number }>();
+  private cachedTopologyDiff: TopologyDiff = { addedIds: new Set(), removedIds: new Set() };
+  private cachedTopologyDiffKey = '';
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
@@ -229,11 +246,14 @@ export class SessionController {
       if (value && this.macroEngine.status === 'playing') this.macroEngine.pause();
       this.emit();
     });
+    this.unsubscribeLicenseChange = subscribeLicenseChange(() => this.emit());
   }
 
   dispose(): void {
     this.unsubscribeReadOnly?.();
     this.unsubscribeReadOnly = undefined;
+    this.unsubscribeLicenseChange?.();
+    this.unsubscribeLicenseChange = undefined;
   }
 
   subscribe(listener: () => void): () => void {
@@ -252,6 +272,7 @@ export class SessionController {
       total: this.macroEngine.total,
       status: this.macroEngine.status,
     } : undefined;
+    const topology = this.computeTopology();
     return {
       connected: this.connected,
       connectionStatus: this.connectionStatus,
@@ -266,7 +287,8 @@ export class SessionController {
       activeMacro,
       recordingMacro: this.macroRecordingBuffer !== undefined,
       recordingMacroSteps: this.macroRecordingBuffer?.length ?? 0,
-      topology: this.computeTopology(),
+      topology,
+      topologyDiff: this.computeTopologyDiff(topology),
       bookmarks: this.snapshotBookmarks(),
       triggers: this.triggers,
       pendingTxCount: this.pendingTx.size,
@@ -321,7 +343,49 @@ export class SessionController {
 
   private computeTopology(): TopologySnapshot {
     if (!this.lares) return { groups: [], total: 0 };
-    return buildTopology(adaptLares4Topology(this.lares));
+    const snapshot = buildTopology(adaptLares4Topology(this.lares));
+    const now = Date.now();
+    for (const group of snapshot.groups) {
+      for (const node of group.nodes) {
+        const key = `${group.kind}:${node.id}`;
+        const existing = this.topologyHistory.get(key);
+        if (existing) existing.lastSeen = now;
+        else this.topologyHistory.set(key, { firstSeen: now, lastSeen: now });
+      }
+    }
+    const pruneCutoff = now - 2 * TOPOLOGY_DIFF_WINDOW_MS;
+    for (const [key, rec] of this.topologyHistory) {
+      if (rec.lastSeen < pruneCutoff) this.topologyHistory.delete(key);
+    }
+    return snapshot;
+  }
+
+  private computeTopologyDiff(topology: TopologySnapshot): TopologyDiff {
+    const now = Date.now();
+    const presentKeys = new Set<string>();
+    for (const group of topology.groups) {
+      for (const node of group.nodes) presentKeys.add(`${group.kind}:${node.id}`);
+    }
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const [key, rec] of this.topologyHistory) {
+      const isPresent = presentKeys.has(key);
+      if (isPresent) {
+        if (now - rec.firstSeen <= TOPOLOGY_DIFF_WINDOW_MS) added.push(key);
+      } else if (now - rec.lastSeen <= TOPOLOGY_DIFF_WINDOW_MS) {
+        removed.push(key);
+      }
+    }
+    added.sort();
+    removed.sort();
+    const cacheKey = `${added.join(',')}|${removed.join(',')}`;
+    if (cacheKey === this.cachedTopologyDiffKey) return this.cachedTopologyDiff;
+    this.cachedTopologyDiffKey = cacheKey;
+    this.cachedTopologyDiff = {
+      addedIds: new Set(added),
+      removedIds: new Set(removed),
+    };
+    return this.cachedTopologyDiff;
   }
 
   private requireTriggersLicense(): void {

@@ -51,22 +51,70 @@ describe('desktop profiles repository (injected persistence)', () => {
     assert.equal(cleared.profiles[0]?.logTagFilters, undefined);
   });
 
-  it('drops invalid logTagFilters values on read', async () => {
+  it('quarantines and surfaces loadError when JSON is unparseable', async () => {
+    const quarantineCalls: string[] = [];
+    const repo = new DesktopProfilesRepository({
+      read: async () => '{ not json',
+      write: async () => {},
+      quarantine: async (suffix) => {
+        quarantineCalls.push(suffix);
+        return `profiles.corrupt-${suffix}.json`;
+      },
+    });
+    const data = await repo.readAll();
+    assert.equal(data.profiles.length, 0);
+    assert.equal(data.defaultProfile, undefined);
+    assert.ok(data.loadError, 'expected loadError');
+    assert.match(data.loadError.reason, /unreadable/i);
+    assert.equal(data.loadError.quarantinedTo, `profiles.corrupt-${quarantineCalls[0]}.json`);
+    assert.equal(quarantineCalls.length, 1);
+    assert.match(quarantineCalls[0] ?? '', /^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('quarantines and surfaces loadError when schema is violated', async () => {
+    const quarantineCalls: string[] = [];
     const stored = JSON.stringify({
       version: 1,
-      profiles: [{
-        name: 'home', ip: '1.1.1.1', pin: '1', wss: true, sender: 's',
-        createdAt: '2020-01-01T00:00:00.000Z',
-        updatedAt: '2020-01-01T00:00:00.000Z',
-        logTagFilters: ['ACK', 'BOGUS', 42, 'ERROR'],
-      }],
+      profiles: [{ name: 'home' /* missing all other required fields */ }],
     });
     const repo = new DesktopProfilesRepository({
       read: async () => stored,
       write: async () => {},
+      quarantine: async (suffix) => {
+        quarantineCalls.push(suffix);
+        return `profiles.corrupt-${suffix}.json`;
+      },
     });
     const data = await repo.readAll();
-    assert.deepEqual(data.profiles[0]?.logTagFilters, ['ACK', 'ERROR']);
+    assert.equal(data.profiles.length, 0);
+    assert.ok(data.loadError);
+    assert.match(data.loadError.reason, /schema mismatch/i);
+    assert.equal(quarantineCalls.length, 1);
+  });
+
+  it('drops loadError and quarantine call when file is missing', async () => {
+    const quarantineCalls: string[] = [];
+    const repo = new DesktopProfilesRepository({
+      read: async () => null,
+      write: async () => {},
+      quarantine: async (suffix) => { quarantineCalls.push(suffix); return ''; },
+    });
+    const data = await repo.readAll();
+    assert.equal(data.profiles.length, 0);
+    assert.equal(data.loadError, undefined);
+    assert.equal(quarantineCalls.length, 0);
+  });
+
+  it('still returns empty + loadError when quarantine itself throws', async () => {
+    const repo = new DesktopProfilesRepository({
+      read: async () => '{ broken',
+      write: async () => {},
+      quarantine: async () => { throw new Error('rename failed'); },
+    });
+    const data = await repo.readAll();
+    assert.equal(data.profiles.length, 0);
+    assert.ok(data.loadError);
+    assert.equal(data.loadError.quarantinedTo, undefined);
   });
 
   it('round-trips macros through upsert and setMacros', async () => {
@@ -88,33 +136,6 @@ describe('desktop profiles repository (injected persistence)', () => {
     await repo.setMacros('home', []);
     const next = await repo.readAll();
     assert.deepEqual(next.profiles[0]?.macros, []);
-  });
-
-  it('drops invalid macros on read', async () => {
-    const stored = JSON.stringify({
-      version: 1,
-      profiles: [{
-        name: 'home', ip: '1.1.1.1', pin: '1', wss: true, sender: 's',
-        createdAt: '2020-01-01T00:00:00.000Z',
-        updatedAt: '2020-01-01T00:00:00.000Z',
-        macros: [
-          { id: 'a', name: 'ok', steps: [{ command: 'x' }], createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z' },
-          { name: 'missing-id', steps: [] },
-          'garbage',
-          { id: 'b', name: 'bad-steps', steps: [{ delayMs: 100 }], createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z' },
-        ],
-      }],
-    });
-    const repo = new DesktopProfilesRepository({
-      read: async () => stored,
-      write: async () => {},
-    });
-    const data = await repo.readAll();
-    const macros = data.profiles[0]?.macros ?? [];
-    assert.equal(macros.length, 2);
-    assert.equal(macros[0]?.name, 'ok');
-    assert.equal(macros[1]?.name, 'bad-steps');
-    assert.equal(macros[1]?.steps.length, 0);
   });
 
   it('remove clears default when deleted profile was default', async () => {

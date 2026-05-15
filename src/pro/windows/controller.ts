@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // See LICENSE in this directory.
 
-import { isFeatureLicensed } from '@/desktop/runtime/commercial-license-prefs.js';
+import { isFeatureLicensed, subscribeLicenseChange } from '@/desktop/runtime/commercial-license-prefs.js';
 import { MAX_FREE_WINDOWS, type WindowsSnapshot } from './types.js';
 
 export interface WindowsAdapter {
@@ -37,6 +37,7 @@ export class WindowsController {
     this.unsubAdapter.push(
       deps.adapter.onWindowOpened((label) => this.handleOpened(label)),
       deps.adapter.onWindowClosed((label) => this.handleClosed(label)),
+      subscribeLicenseChange(() => this.emit()),
     );
     void this.refresh();
   }

@@ -81,4 +81,32 @@ describe('TopologyPane', () => {
     render(<Wrap topology={populatedSnapshot} onFilterById={() => {}} variant="rail" onClose={() => {}} />);
     assert.ok(screen.getByRole('button', { name: /hide devices rail/i }));
   });
+
+  it('renders the refresh button when onRefresh is provided and disables it when canRefresh is false', () => {
+    render(<Wrap topology={populatedSnapshot} onFilterById={() => {}} onRefresh={() => {}} canRefresh={false} />);
+    const btn = screen.getByRole('button', { name: /refresh topology/i });
+    assert.ok(btn);
+    assert.equal((btn as HTMLButtonElement).disabled, true);
+  });
+
+  it('clicking the refresh button invokes onRefresh when canRefresh is true', async () => {
+    const user = userEvent.setup();
+    const onRefresh = mock.fn();
+    render(<Wrap topology={populatedSnapshot} onFilterById={() => {}} onRefresh={onRefresh} canRefresh />);
+    await user.click(screen.getByRole('button', { name: /refresh topology/i }));
+    assert.equal(onRefresh.mock.callCount(), 1);
+  });
+
+  it('renders added/removed diff chips in group headers', () => {
+    render(
+      <Wrap
+        topology={populatedSnapshot}
+        onFilterById={() => {}}
+        addedIds={new Set(['lights:1'])}
+        removedIds={new Set(['zones:9'])}
+      />,
+    );
+    assert.ok(screen.getByLabelText(/1 added in last 30s/i));
+    assert.ok(screen.getByLabelText(/1 removed in last 30s/i));
+  });
 });

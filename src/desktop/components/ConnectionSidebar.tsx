@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { ConnectionProfile } from '../runtime/profiles-repository-desktop.js';
+import type { ConnectionProfile, LoadError } from '../runtime/profiles-repository-desktop.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { useConnectionStatus } from '../runtime/session-store.js';
 import { ConnectionProfileList } from './ConnectionProfileList.js';
@@ -52,6 +52,7 @@ export function ConnectionSidebar() {
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [persistedDefault, setPersistedDefault] = useState<string | undefined>(undefined);
+  const [profilesLoadError, setProfilesLoadError] = useState<LoadError | undefined>(undefined);
   const [connectingName, setConnectingName] = useState<string | undefined>(undefined);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -64,6 +65,7 @@ export function ConnectionSidebar() {
     const data = await controller.listProfiles();
     setProfiles(data.profiles);
     setPersistedDefault(data.defaultProfile);
+    setProfilesLoadError(data.loadError);
     return data;
   }, [controller]);
 
@@ -200,6 +202,7 @@ export function ConnectionSidebar() {
           connectingName={connectingName}
           defaultingName={defaultingName}
           showError={showError}
+          loadError={profilesLoadError}
           onNewProfile={openNewForm}
           onEditProfile={openEditForm}
           onConnect={connectFromCard}

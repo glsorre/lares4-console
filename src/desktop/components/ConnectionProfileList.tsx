@@ -6,6 +6,7 @@ import {
   Plus,
   Star,
   Trash2,
+  TriangleAlert,
   Unplug,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import type { ConnectionProfile } from '../runtime/profiles-repository-desktop.js';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import type { ConnectionProfile, LoadError } from '../runtime/profiles-repository-desktop.js';
 import { useActiveProfileName, useConnectionStatus } from '../runtime/session-store.js';
 import { ConnectionErrorAlert } from './ConnectionErrorAlert.js';
 
@@ -28,6 +30,7 @@ interface ConnectionProfileListProps {
   connectingName: string | undefined;
   defaultingName: string | null;
   showError: string | null;
+  loadError?: LoadError;
   onNewProfile: () => void;
   onEditProfile: (p: ConnectionProfile) => void;
   onConnect: (p: ConnectionProfile) => void;
@@ -42,6 +45,7 @@ export function ConnectionProfileList({
   connectingName,
   defaultingName,
   showError,
+  loadError,
   onNewProfile,
   onEditProfile,
   onConnect,
@@ -75,6 +79,24 @@ export function ConnectionProfileList({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
+        {loadError && (
+          <Alert variant="destructive" className="mb-3 py-2">
+            <TriangleAlert className="size-3.5" aria-hidden />
+            <AlertTitle className="text-xs font-semibold">{t('connect.profilesLoadErrorTitle')}</AlertTitle>
+            <AlertDescription className="text-xs leading-snug">
+              <span className="break-words">{t('connect.profilesLoadErrorBody')}</span>
+              {loadError.quarantinedTo && (
+                <span className="text-muted-foreground mt-1 block break-all">
+                  <Trans
+                    i18nKey="connect.profilesLoadErrorQuarantined"
+                    values={{ filename: loadError.quarantinedTo }}
+                    components={{ strong: <strong className="text-foreground" /> }}
+                  />
+                </span>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         {showError && <ConnectionErrorAlert raw={showError} />}
 
         {profiles.length === 0 ? (

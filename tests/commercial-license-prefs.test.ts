@@ -13,6 +13,7 @@ import {
   isFeatureLicensed,
   setBundleLicense,
   setFeatureLicense,
+  subscribeLicenseChange,
   verifyAndSaveFeatureLicense,
 } from '../src/desktop/runtime/commercial-license-prefs.js';
 import { installFakeTransport } from './helpers/fake-license-transport.js';
@@ -213,6 +214,134 @@ describe('commercial-license-prefs', () => {
       assert.equal(getBundleRaw(), 'BUNDLE-RAW');
       setBundleLicense(null);
       assert.equal(getBundleRaw(), null);
+    });
+  });
+
+  describe('subscribeLicenseChange replay + self-healing', () => {
+    it('replays once on next microtask for subscribers that attach after bootstrap', async () => {
+      const token = await mintToken('macros');
+      fakeStore.set('macros', token);
+      await bootstrapLicenses();
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      assert.equal(calls, 0, 'replay is async, not sync');
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+      assert.equal(calls, 1, 'late subscriber gets exactly one replay');
+      unsub();
+    });
+
+    it('does NOT replay for subscribers attached before bootstrap (they get the real notify)', async () => {
+      const token = await mintToken('macros');
+      fakeStore.set('macros', token);
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      await bootstrapLicenses();
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+      unsub();
+      assert.equal(calls, 1, 'early subscriber fires once via bootstrap notify, no replay');
+    });
+
+    it('isFeatureLicensed self-heals when bootstrap left the cache empty', async () => {
+      // Simulate bootstrap-with-empty-cache: seed tokenStore directly, do NOT
+      // call verifyLicense up front. `isFeatureLicensed` must kick off a
+      // background verify and broadcast on success.
+      const token = await mintToken('macros');
+      fakeStore.set('macros', token);
+      // Read keychain into tokenStore but skip the verify step that bootstrap
+      // would normally do: that mirrors mode A (silent verify failure).
+      const { setFeatureLicense } = await import(
+        '../src/desktop/runtime/commercial-license-prefs.js'
+      );
+      setFeatureLicense('macros', token);
+      __clearVerifyCacheForTests();
+      // Now the cache is empty but the token is in the mirror.
+      assert.equal(isFeatureLicensed('macros'), false);
+      let notifies = 0;
+      const unsub = subscribeLicenseChange(() => { notifies += 1; });
+      // Trigger the lazy path.
+      assert.equal(isFeatureLicensed('macros'), false);
+      // Wait for the background verify to resolve.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(isFeatureLicensed('macros'), true, 'cache populated by lazy verify');
+      assert.ok(notifies >= 1, 'lazy verify broadcasts a license-change');
+      unsub();
+    });
+
+    it('lazy verify is deduplicated per raw token', async () => {
+      const token = await mintToken('macros');
+      // Spy on transport.verify by wrapping.
+      let verifyCalls = 0;
+      const handle = installFakeTransport({ pubkeysHex: [await PUB_HEX_PROMISE] });
+      const orig = handle.transport.verify.bind(handle.transport);
+      handle.transport.verify = async (raw, featureId) => {
+        verifyCalls += 1;
+        return orig(raw, featureId);
+      };
+      // Re-install with the wrapped transport.
+      const { __setLicenseTransport } = await import(
+        '../src/desktop/runtime/license-transport.js'
+      );
+      __setLicenseTransport(handle.transport);
+      const { setFeatureLicense } = await import(
+        '../src/desktop/runtime/commercial-license-prefs.js'
+      );
+      setFeatureLicense('macros', token);
+      __clearVerifyCacheForTests();
+      // Burst-call isFeatureLicensed; only one in-flight verify should kick off.
+      for (let i = 0; i < 5; i += 1) isFeatureLicensed('macros');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(verifyCalls, 1, 'dedup: one in-flight verify per raw token');
+    });
+  });
+
+  describe('subscribeLicenseChange', () => {
+    it('fires on setFeatureLicense (set and clear)', () => {
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      setFeatureLicense('macros', 'RAW-A');
+      setFeatureLicense('macros', null);
+      unsub();
+      setFeatureLicense('macros', 'RAW-B'); // post-unsub, must not count
+      assert.equal(calls, 2);
+    });
+
+    it('fires on setBundleLicense (set and clear)', () => {
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      setBundleLicense('BUNDLE-RAW');
+      setBundleLicense(null);
+      unsub();
+      assert.equal(calls, 2);
+    });
+
+    it('fires on verifyAndSaveFeatureLicense success', async () => {
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      const token = await mintToken('macros');
+      const result = await verifyAndSaveFeatureLicense('macros', token);
+      unsub();
+      assert.equal(result.ok, true);
+      assert.equal(calls, 1);
+    });
+
+    it('fires once at the tail of bootstrapLicenses', async () => {
+      const token = await mintToken('tabs');
+      fakeStore.set('tabs', token);
+      let calls = 0;
+      const unsub = subscribeLicenseChange(() => { calls += 1; });
+      await bootstrapLicenses();
+      unsub();
+      assert.equal(calls, 1);
+    });
+
+    it('isolates failures in one listener from the others', () => {
+      let good = 0;
+      const unsubBad = subscribeLicenseChange(() => { throw new Error('boom'); });
+      const unsubGood = subscribeLicenseChange(() => { good += 1; });
+      setFeatureLicense('macros', 'RAW');
+      unsubBad();
+      unsubGood();
+      assert.equal(good, 1);
     });
   });
 });

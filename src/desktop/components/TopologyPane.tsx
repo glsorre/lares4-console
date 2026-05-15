@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Network, PanelRightClose, Play, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Network, PanelRightClose, Play, RotateCw, Search } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,6 +22,32 @@ interface TopologyPaneProps {
   recentDeviceIds?: ReadonlySet<string>;
   filter?: string;
   onFilterChange?: (next: string) => void;
+  /** Keys are `${kind}:${id}`. */
+  addedIds?: ReadonlySet<string>;
+  /** Keys are `${kind}:${id}`. */
+  removedIds?: ReadonlySet<string>;
+  onRefresh?: () => void;
+  canRefresh?: boolean;
+}
+
+function DiffChip({ added, removed, t }: { added: number; removed: number; t: (key: string, opts?: Record<string, unknown>) => string }) {
+  return (
+    <span className="font-mono text-[10px] tabular-nums leading-none">
+      {added > 0 && (
+        <span
+          className="text-[oklch(var(--accent))]"
+          aria-label={t('topology.diffAddedAria', { count: added })}
+        >+{added}</span>
+      )}
+      {added > 0 && removed > 0 && <span aria-hidden> </span>}
+      {removed > 0 && (
+        <span
+          className="text-muted-foreground line-through"
+          aria-label={t('topology.diffRemovedAria', { count: removed })}
+        >−{removed}</span>
+      )}
+    </span>
+  );
 }
 
 const STATUS_STYLE: Record<TopologyNode['status'], string> = {
@@ -47,6 +73,10 @@ export function TopologyPane({
   recentDeviceIds,
   filter: filterProp,
   onFilterChange,
+  addedIds,
+  removedIds,
+  onRefresh,
+  canRefresh = false,
 }: TopologyPaneProps) {
   const { t } = useTranslation();
   const isControlled = filterProp !== undefined && onFilterChange !== undefined;
@@ -80,6 +110,24 @@ export function TopologyPane({
     });
   }
 
+  const groupDiff = useMemo(() => {
+    const map = new Map<string, { added: number; removed: number }>();
+    if (!addedIds && !removedIds) return map;
+    for (const group of filtered.groups) {
+      let added = 0;
+      for (const node of group.nodes) {
+        if (addedIds?.has(`${group.kind}:${node.id}`)) added += 1;
+      }
+      let removed = 0;
+      if (removedIds && removedIds.size > 0) {
+        const prefix = `${group.kind}:`;
+        for (const key of removedIds) if (key.startsWith(prefix)) removed += 1;
+      }
+      if (added > 0 || removed > 0) map.set(group.kind, { added, removed });
+    }
+    return map;
+  }, [filtered, addedIds, removedIds]);
+
   const isRail = variant === 'rail';
   const isCompact = variant === 'compact';
 
@@ -100,6 +148,27 @@ export function TopologyPane({
             {filtered.total}{filtered.total !== topology.total ? `/${topology.total}` : ''}
           </span>
         )}
+        {onRefresh && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  'text-muted-foreground hover:text-foreground h-7 w-7 p-0',
+                  empty && 'ml-auto',
+                )}
+                onClick={onRefresh}
+                disabled={!canRefresh}
+                aria-label={t('topology.refreshAria')}
+              >
+                <RotateCw className="size-4" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('topology.refreshTooltip')}</TooltipContent>
+          </Tooltip>
+        )}
         {showCloseButton && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -107,7 +176,10 @@ export function TopologyPane({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-muted-foreground hover:text-foreground ml-auto h-7 w-7 p-0"
+                className={cn(
+                  'text-muted-foreground hover:text-foreground h-7 w-7 p-0',
+                  !onRefresh && 'ml-auto',
+                )}
                 onClick={onClose}
                 aria-label={t('topology.hideAria')}
               >
@@ -166,6 +238,7 @@ export function TopologyPane({
       <div className="flex flex-col gap-2 px-3 py-3">
         {filtered.groups.map((group) => {
           const isCollapsed = collapsed.has(group.kind);
+          const diff = groupDiff.get(group.kind);
           return (
             <div key={group.kind} className="border-border/50 rounded-lg border bg-background/40">
               <button
@@ -178,15 +251,23 @@ export function TopologyPane({
                   {isCollapsed ? <ChevronRight className="size-3.5" aria-hidden /> : <ChevronDown className="size-3.5" aria-hidden />}
                   <span className="text-sm font-medium">{group.label}</span>
                 </span>
-                <span className="text-muted-foreground font-mono text-xs tabular-nums">{group.count}</span>
+                <span className="flex items-center gap-1.5">
+                  {diff && <DiffChip added={diff.added} removed={diff.removed} t={t} />}
+                  <span className="text-muted-foreground font-mono text-xs tabular-nums">{group.count}</span>
+                </span>
               </button>
               {!isCollapsed && (
                 <ul className="divide-border/40 border-border/40 divide-y border-t" role="list">
-                  {group.nodes.map((node) => (
+                  {group.nodes.map((node) => {
+                    const isAdded = addedIds?.has(`${group.kind}:${node.id}`) ?? false;
+                    return (
                     <li key={`${group.kind}-${node.id}`}>
                       <button
                         type="button"
-                        className="hover:bg-muted/60 flex w-full items-center gap-2 px-3 py-1.5 text-left"
+                        className={cn(
+                          'hover:bg-muted/60 flex w-full items-center gap-2 px-3 py-1.5 text-left',
+                          isAdded && 'ring-1 ring-inset ring-[oklch(var(--accent)/0.55)]',
+                        )}
                         onClick={() => onFilterById(node.id)}
                         title={t('topology.filterByIdTitle', { id: node.id })}
                       >
@@ -207,7 +288,8 @@ export function TopologyPane({
                         </span>
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -222,6 +304,7 @@ export function TopologyPane({
       <div className="flex flex-col gap-0.5 px-2 py-2">
         {filtered.groups.map((group) => {
           const isCollapsed = collapsed.has(group.kind);
+          const diff = groupDiff.get(group.kind);
           return (
             <div key={group.kind} className="flex flex-col">
               <button
@@ -232,12 +315,20 @@ export function TopologyPane({
               >
                 {isCollapsed ? <ChevronRight className="size-3" aria-hidden /> : <ChevronDown className="size-3" aria-hidden />}
                 <span>{group.label}</span>
-                <span className="text-muted-foreground/80 ml-auto font-mono text-xs tracking-normal normal-case tabular-nums">{group.count}</span>
+                {diff && <span className="ml-auto"><DiffChip added={diff.added} removed={diff.removed} t={t} /></span>}
+                <span className={cn(
+                  'text-muted-foreground/80 font-mono text-xs tracking-normal normal-case tabular-nums',
+                  !diff && 'ml-auto',
+                )}>{group.count}</span>
               </button>
               {!isCollapsed && (
                 <ul className="flex flex-col" role="list">
                   {group.nodes.map((node) => {
                     const recent = recentDeviceIds?.has(node.id) ?? false;
+                    const isAdded = addedIds?.has(`${group.kind}:${node.id}`) ?? false;
+                    const shadows: string[] = [];
+                    if (recent) shadows.push('inset 2px 0 0 var(--primary)');
+                    if (isAdded) shadows.push('inset 0 0 0 1px oklch(var(--accent) / 0.55)');
                     return (
                       <li key={`${group.kind}-${node.id}`}>
                         <button
@@ -245,7 +336,7 @@ export function TopologyPane({
                           className={cn(
                             'hover:bg-accent/40 grid w-full grid-cols-[38px_1fr_auto_10px] items-center gap-2 rounded-md px-1.5 py-1 text-left',
                           )}
-                          style={recent ? { boxShadow: 'inset 2px 0 0 var(--primary)' } : undefined}
+                          style={shadows.length > 0 ? { boxShadow: shadows.join(', ') } : undefined}
                           onClick={() => onFilterById(node.id)}
                           title={t('topology.filterByIdTitle', { id: node.id })}
                         >
