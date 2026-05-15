@@ -187,6 +187,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {t('about.madeBy')} <span aria-label={t('about.loveAria')}>🤍</span> {t('about.byAuthorAt')}{' '}
+            {/* eslint-disable-next-line i18next/no-literal-string */}
             <ExternalAnchor href="https://rightright.me">rightright.me</ExternalAnchor>
           </p>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -322,6 +323,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                       ) : (
                         <span className="font-mono truncate">{dep.name}</span>
                       )}
+                      {/* eslint-disable-next-line i18next/no-literal-string */}
                       <span className="text-xs text-muted-foreground">
                         v{dep.version}
                       </span>

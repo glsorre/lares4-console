@@ -1,13 +1,13 @@
 import { Lares4Factory } from 'lares4-ts';
 import {
   createSocketEmitter,
-  defaultLogger,
   extractSocketBridge,
   type SocketCloseListener,
   type SocketErrorListener,
   type SocketReceiveListener,
   type SocketSendListener,
-} from './lares4-logger.js';
+} from './socket-emitter.js';
+import { defaultLogger } from './lares-logger.js';
 
 export interface ClientEnv {
   ip: string;

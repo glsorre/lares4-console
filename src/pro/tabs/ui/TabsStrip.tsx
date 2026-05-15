@@ -20,20 +20,20 @@ import { useTabs } from '../context.js';
 
 export function TabsStrip() {
   const { t } = useTranslation();
-  const { controller, snapshot } = useTabs();
+  const { controller, tabs, activeId } = useTabs();
   const [licenseTick, setLicenseTick] = useState(0);
   const [closeTargetId, setCloseTargetId] = useState<string | null>(null);
 
   const canAdd = useMemo(
     () => controller.canAddTab(),
-    [controller, snapshot.tabs.length, licenseTick],
+    [controller, tabs.length, licenseTick],
   );
   const closeTarget = closeTargetId
-    ? snapshot.tabs.find((t) => t.id === closeTargetId)
+    ? tabs.find((t) => t.id === closeTargetId)
     : undefined;
 
   function requestClose(tabId: string) {
-    const meta = snapshot.tabs.find((t) => t.id === tabId);
+    const meta = tabs.find((t) => t.id === tabId);
     if (meta && meta.status !== 'idle') {
       setCloseTargetId(tabId);
       return;
@@ -46,7 +46,7 @@ export function TabsStrip() {
     setCloseTargetId(null);
   }
 
-  const onlyOneTab = snapshot.tabs.length === 1;
+  const onlyOneTab = tabs.length === 1;
 
   return (
     <div
@@ -54,8 +54,8 @@ export function TabsStrip() {
       role="tablist"
       aria-label={t('pro.tabs.ariaLabel')}
     >
-      {snapshot.tabs.map((tab) => {
-        const isActive = tab.id === snapshot.activeId;
+      {tabs.map((tab) => {
+        const isActive = tab.id === activeId;
         const dotClasses = connectionChipClasses(tab.status);
         return (
           <div

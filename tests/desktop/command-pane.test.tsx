@@ -5,12 +5,6 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CommandPane } from '../../src/desktop/components/CommandPane.js';
 import { TooltipProvider } from '../../src/components/ui/tooltip.js';
-import type { SessionSnapshot } from '../../src/desktop/runtime/session-controller.js';
-
-const stubSnapshot = {
-  outputFormat: 'pretty',
-  readOnly: false,
-} as unknown as SessionSnapshot;
 
 function Harness({ initial = '' }: { initial?: string }) {
   const [cmd, setCmd] = useState(initial);
@@ -18,7 +12,6 @@ function Harness({ initial = '' }: { initial?: string }) {
     <TooltipProvider>
       <div data-testid="harness" data-value={cmd}>
         <CommandPane
-          snapshot={stubSnapshot}
           command={cmd}
           onCommandChange={setCmd}
           onSubmit={() => {}}
@@ -36,7 +29,6 @@ function ClearOnSubmitHarness({ initial = 'fo' }: { initial?: string }) {
     <TooltipProvider>
       <div data-testid="harness" data-value={cmd}>
         <CommandPane
-          snapshot={stubSnapshot}
           command={cmd}
           onCommandChange={setCmd}
           onSubmit={() => setCmd('')}

@@ -3,23 +3,64 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { TabsController } from './controller.js';
-import type { TabsSnapshot } from './types.js';
-import type { SessionController, SessionSnapshot } from '@/desktop/runtime/session-controller.js';
+import type { TabMeta } from './types.js';
+import type { SessionController } from '@/desktop/runtime/session-controller.js';
+import { INITIAL_SESSION_SNAPSHOT, setSessionSnapshot } from '@/desktop/runtime/session-store.js';
+
+interface TabsListState {
+  tabs: TabMeta[];
+  activeId: string;
+}
 
 interface TabsContextValue {
   controller: TabsController;
-  snapshot: TabsSnapshot;
+  tabs: TabMeta[];
+  activeId: string;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
 
+function sameTabList(a: TabsListState, b: TabsListState): boolean {
+  if (a.activeId !== b.activeId) return false;
+  if (a.tabs.length !== b.tabs.length) return false;
+  for (let i = 0; i < a.tabs.length; i += 1) {
+    const x = a.tabs[i];
+    const y = b.tabs[i];
+    if (x.id !== y.id || x.label !== y.label || x.status !== y.status
+        || x.activeProfileName !== y.activeProfileName) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function TabsProvider({ children }: { children: ReactNode }) {
   const controller = useMemo(() => new TabsController(), []);
-  const [snapshot, setSnapshot] = useState<TabsSnapshot>(() => controller.snapshot());
+  const [list, setList] = useState<TabsListState>(() => {
+    const s = controller.snapshot();
+    setSessionSnapshot(s.activeSnapshot);
+    return { tabs: s.tabs, activeId: s.activeId };
+  });
 
-  useEffect(() => controller.subscribe(() => setSnapshot(controller.snapshot())), [controller]);
+  useEffect(() => {
+    const unsub = controller.subscribe(() => {
+      const s = controller.snapshot();
+      setSessionSnapshot(s.activeSnapshot);
+      setList((prev) => {
+        const next: TabsListState = { tabs: s.tabs, activeId: s.activeId };
+        return sameTabList(prev, next) ? prev : next;
+      });
+    });
+    return () => {
+      unsub();
+      setSessionSnapshot(INITIAL_SESSION_SNAPSHOT);
+    };
+  }, [controller]);
 
-  const value = useMemo<TabsContextValue>(() => ({ controller, snapshot }), [controller, snapshot]);
+  const value = useMemo<TabsContextValue>(
+    () => ({ controller, tabs: list.tabs, activeId: list.activeId }),
+    [controller, list.tabs, list.activeId],
+  );
 
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;
 }
@@ -32,10 +73,7 @@ export function useTabs(): TabsContextValue {
   return ctx;
 }
 
-export function useSessionController(): { controller: SessionController; snapshot: SessionSnapshot } {
-  const { controller, snapshot } = useTabs();
-  return {
-    controller: controller.activeController(),
-    snapshot: snapshot.activeSnapshot,
-  };
+export function useSessionController(): { controller: SessionController } {
+  const { controller } = useTabs();
+  return { controller: controller.activeController() };
 }

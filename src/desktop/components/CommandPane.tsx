@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { SessionSnapshot } from '../runtime/session-controller.js';
+import { useOutputFormat, useReadOnly } from '../runtime/session-store.js';
 import { suggestCompletions } from '../../core/autocomplete.js';
 import { applySuggestion } from './command-pane-apply.js';
 import { AutocompletePopover } from './AutocompletePopover.js';
@@ -11,7 +11,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 
 interface CommandPaneProps {
-  snapshot: SessionSnapshot;
   command: string;
   onCommandChange: (value: string) => void;
   onSubmit: () => void;
@@ -20,7 +19,6 @@ interface CommandPaneProps {
 }
 
 export function CommandPane({
-  snapshot,
   command,
   onCommandChange,
   onSubmit,
@@ -28,11 +26,13 @@ export function CommandPane({
   onHistoryDown,
 }: CommandPaneProps) {
   const { t } = useTranslation();
+  const outputFormat = useOutputFormat();
+  const readOnly = useReadOnly();
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const canRun = command.trim().length > 0;
-  const outputNonDefault = snapshot.outputFormat !== 'pretty';
+  const outputNonDefault = outputFormat !== 'pretty';
 
   const suggestions = useMemo(() => suggestCompletions(command).slice(0, 8), [command]);
 
@@ -124,7 +124,7 @@ export function CommandPane({
               />
               {outputNonDefault && (
                 <span className="bg-muted/40 text-muted-foreground border-border/50 flex shrink-0 items-center border-l px-2 font-mono text-xs uppercase tracking-wide">
-                  {snapshot.outputFormat}
+                  {outputFormat}
                 </span>
               )}
             </div>
@@ -149,12 +149,12 @@ export function CommandPane({
           );
         }}
       </AutocompletePopover>
-      {snapshot.readOnly && (
+      {readOnly && (
         <p className="mt-1.5 px-1 text-meta text-amber-700 dark:text-amber-300">
           {t('command.readOnlyHint')}
         </p>
       )}
-      {!command && !popoverOpen && !snapshot.readOnly && (
+      {!command && !popoverOpen && !readOnly && (
         <p className="text-muted-foreground/70 mt-1.5 px-1 text-meta">
           <span className="font-mono">{t('command.keyTab')}</span> {t('command.actAutocomplete')} ·{' '}
           <span className="font-mono">{t('command.keyArrows')}</span> {t('command.actHistory')} ·{' '}

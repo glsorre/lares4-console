@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
 import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
 import { useSessionController } from '@pro/tabs/context.js';
+import { useConnectionStatus, useMacrosSlice } from '@/desktop/runtime/session-store.js';
 import type { Macro } from '@pro/macros/types.js';
 import { MacroEditorDialog } from '@pro/macros/ui/MacroEditorDialog.js';
 
@@ -38,19 +39,15 @@ interface MacrosPaneProps {
 
 export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
   const { t } = useTranslation();
-  const { controller, snapshot } = useSessionController();
-  const macros = snapshot.macros;
-  const activeMacro = snapshot.activeMacro;
-  const recording = snapshot.recordingMacro;
-  const recordingSteps = snapshot.recordingMacroSteps;
+  const { controller } = useSessionController();
+  const { macros, activeMacro, recordingMacro: recording, recordingMacroSteps: recordingSteps } = useMacrosSlice();
+  const { connected } = useConnectionStatus();
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingMacro, setEditingMacro] = useState<Macro | undefined>(undefined);
   const [deleteMacroId, setDeleteMacroId] = useState<string | null>(null);
   const [recordingName, setRecordingName] = useState('');
   const [recordingNameOpen, setRecordingNameOpen] = useState(false);
-
-  const connected = snapshot.connected;
 
   if (!isLicensed) {
     return (

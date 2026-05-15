@@ -24,6 +24,18 @@ import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
 import { showSaveDialog } from '../runtime/tauri-fs.js';
 import { useSessionController } from '@pro/tabs/context.js';
+import {
+  useActiveProfileName,
+  useBookmarks,
+  useConnectionStatus,
+  useLicensed,
+  useLogEntries,
+  useLogTagFilters,
+  useMacrosSlice,
+  useOutputFormat,
+  useTopology,
+  useTriggers,
+} from '../runtime/session-store.js';
 import { compileChipFilters } from '../../core/log-query.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
 import type { FeatureId } from '../runtime/commercial-license-prefs.js';
@@ -56,7 +68,17 @@ function consumeLegacySourceTokens(): string[] {
 
 export function ConsolePage() {
   const { t } = useTranslation();
-  const { controller, snapshot } = useSessionController();
+  const { controller } = useSessionController();
+  const { connected } = useConnectionStatus();
+  const logEntries = useLogEntries();
+  const bookmarks = useBookmarks();
+  const triggers = useTriggers();
+  const topology = useTopology();
+  const licensed = useLicensed();
+  const outputFormat = useOutputFormat();
+  const activeProfileName = useActiveProfileName();
+  const logTagFilters = useLogTagFilters();
+  const { macros } = useMacrosSlice();
   const { sidebarOpen, toggleSidebar } = useOutletContext<LayoutOutletContext>();
   const wide = useWideLayout();
   const reduceMotion = useReducedMotion();
@@ -73,13 +95,13 @@ export function ConsolePage() {
 
   const migratedProfilesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const name = snapshot.activeProfileName ?? '';
+    const name = activeProfileName ?? '';
     if (migratedProfilesRef.current.has(name)) return;
     migratedProfilesRef.current.add(name);
     const tokens: string[] = [];
     tokens.push(...consumeLegacySourceTokens());
-    if (snapshot.logTagFilters !== undefined && snapshot.logTagFilters.length > 0) {
-      tokens.push(...snapshot.logTagFilters.map((t) => `tag:${t}`));
+    if (logTagFilters !== undefined && logTagFilters.length > 0) {
+      tokens.push(...logTagFilters.map((t) => `tag:${t}`));
       controller.setLogTagFilters(undefined);
     }
     if (tokens.length === 0) return;
@@ -88,10 +110,10 @@ export function ConsolePage() {
       return prev.length === 0 ? prefix : `${prefix} ${prev}`;
     });
     setSearchPulseKey((n) => n + 1);
-  }, [snapshot.activeProfileName, snapshot.logTagFilters, controller]);
+  }, [activeProfileName, logTagFilters, controller]);
 
-  const annotationsLicensed = snapshot.licensed.annotations;
-  const triggersLicensed = snapshot.licensed.triggers;
+  const annotationsLicensed = licensed.annotations;
+  const triggersLicensed = licensed.triggers;
 
   useEffect(() => {
     if (!annotationsLicensed && pinnedId !== undefined) setPinnedId(undefined);
@@ -102,17 +124,17 @@ export function ConsolePage() {
   }, [topologyRailOpen]);
 
   useEffect(() => {
-    if (snapshot.connected) return;
+    if (connected) return;
     setDetailTab('detail');
     setTopologyRailOpen(false);
     setRailSheetOpen(false);
-  }, [snapshot.connected]);
+  }, [connected]);
 
-  const canSubmit = useMemo(() => snapshot.connected && command.trim().length > 0, [snapshot.connected, command]);
-  const msgCount = snapshot.logEntries.length;
+  const canSubmit = useMemo(() => connected && command.trim().length > 0, [connected, command]);
+  const msgCount = logEntries.length;
   const bookmarkedIds = useMemo(
-    () => new Set(snapshot.bookmarks.map((b) => b.groupId)),
-    [snapshot.bookmarks],
+    () => new Set(bookmarks.map((b) => b.groupId)),
+    [bookmarks],
   );
 
   // Apply the chip filter once at the parent so both LogsListPane and LogDetailPane see
@@ -120,16 +142,16 @@ export function ConsolePage() {
   // which rows merge — leaving merged-row selections unresolvable in the detail pane.
   const filteredLogEntries = useMemo(() => {
     const chipFilters = compileChipFilters(searchInput);
-    if (chipFilters.isEmpty) return snapshot.logEntries;
-    return snapshot.logEntries.filter((entry) => chipFilters.predicate(entry));
-  }, [snapshot.logEntries, searchInput]);
+    if (chipFilters.isEmpty) return logEntries;
+    return logEntries.filter((entry) => chipFilters.predicate(entry));
+  }, [logEntries, searchInput]);
 
   useEffect(() => {
-    if (snapshot.logEntries.length === 0) return;
+    if (logEntries.length === 0) return;
     if (selectedId) return;
-    const last = snapshot.logEntries[snapshot.logEntries.length - 1];
+    const last = logEntries[logEntries.length - 1];
     if (last?.groupId) setSelectedId(last.groupId);
-  }, [snapshot.logEntries, selectedId]);
+  }, [logEntries, selectedId]);
 
   function filterById(id: string) {
     setSearchInput(`id:${id}`);
@@ -159,7 +181,7 @@ export function ConsolePage() {
   }
 
   function runStateAll() {
-    if (!snapshot.connected) return;
+    if (!connected) return;
     void controller.submit('state all');
   }
 
@@ -178,8 +200,8 @@ export function ConsolePage() {
     }
   }
 
-  const macrosLicensed = snapshot.licensed.macros;
-  const enabledTriggerCount = snapshot.triggers.filter((r) => r.enabled).length;
+  const macrosLicensed = licensed.macros;
+  const enabledTriggerCount = triggers.filter((r) => r.enabled).length;
 
   const detailTabs = useMemo(() => {
     const tabs: Array<{
@@ -194,7 +216,7 @@ export function ConsolePage() {
         value: 'bookmarks',
         label: t('consolePage.tabBookmarks'),
         icon: BookmarkIcon,
-        badge: snapshot.bookmarks.length || undefined,
+        badge: bookmarks.length || undefined,
         lockFeature: annotationsLicensed ? undefined : 'annotations',
       },
       {
@@ -208,15 +230,15 @@ export function ConsolePage() {
         value: 'macros',
         label: t('consolePage.tabMacros'),
         icon: Zap,
-        badge: snapshot.macros.length || undefined,
+        badge: macros.length || undefined,
         lockFeature: macrosLicensed ? undefined : 'macros',
       },
     ];
     return tabs;
   }, [
     t,
-    snapshot.bookmarks.length,
-    snapshot.macros.length,
+    bookmarks.length,
+    macros.length,
     enabledTriggerCount,
     annotationsLicensed,
     triggersLicensed,
@@ -240,7 +262,7 @@ export function ConsolePage() {
             <TabsTrigger
               key={tab.value}
               value={tab.value}
-              disabled={!snapshot.connected}
+              disabled={!connected}
               className="gap-1.5 text-xs"
             >
               <Icon className="size-3.5" aria-hidden />
@@ -258,15 +280,15 @@ export function ConsolePage() {
         <LogDetailPane
           entries={filteredLogEntries}
           selectedId={selectedId}
-          outputFormat={snapshot.outputFormat}
+          outputFormat={outputFormat}
           onFormatChange={(fmt) => controller.setOutputFormat(fmt)}
         />
       </TabsContent>
       <TabsContent value="bookmarks" className="flex min-h-0 min-w-0 flex-1 flex-col">
         {annotationsLicensed ? (
           <BookmarksPane
-            bookmarks={snapshot.bookmarks}
-            entries={snapshot.logEntries}
+            bookmarks={bookmarks}
+            entries={logEntries}
             selectedId={selectedId}
             onSelect={selectFromBookmarks}
             onRemove={(groupId: string) => controller.toggleBookmark(groupId)}
@@ -286,13 +308,13 @@ export function ConsolePage() {
       <TabsContent value="triggers" className="flex min-h-0 min-w-0 flex-1 flex-col">
         {triggersLicensed ? (
           <TriggersPane
-            triggers={snapshot.triggers}
+            triggers={triggers}
             onSave={(next) => controller.saveTriggers(next)}
             isLicensed={triggersLicensed}
             disabledReason={
-              !snapshot.connected
+              !connected
                 ? t('consolePage.triggersDisabledDisconnected')
-                : !snapshot.activeProfileName
+                : !activeProfileName
                   ? t('consolePage.triggersDisabledNoProfile')
                   : undefined
             }
@@ -324,7 +346,7 @@ export function ConsolePage() {
   const logsPanelContent = (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <LogsListPane
-        entries={snapshot.logEntries}
+        entries={logEntries}
         selectedId={selectedId}
         onSelect={setSelectedId}
         searchInput={searchInput}
@@ -386,7 +408,6 @@ export function ConsolePage() {
   const workspaceContent = (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden px-4 py-3 sm:px-5">
       <ConsoleTopBar
-        snapshot={snapshot}
         msgCount={msgCount}
         sidebarOpen={sidebarOpen}
         topologyRailOpen={wide ? topologyRailOpen : railSheetOpen}
@@ -422,9 +443,8 @@ export function ConsolePage() {
         />
       )}
 
-      {snapshot.connected && (
+      {connected && (
         <CommandPane
-          snapshot={snapshot}
           command={command}
           onCommandChange={(value) => {
             setCommand(value);
@@ -449,8 +469,8 @@ export function ConsolePage() {
   );
 
   const recentDeviceIds = useMemo(
-    () => collectRecentDeviceIds(snapshot.logEntries, snapshot.topology),
-    [snapshot.logEntries, snapshot.topology],
+    () => collectRecentDeviceIds(logEntries, topology),
+    [logEntries, topology],
   );
 
   const activitySidebar = (
@@ -487,16 +507,16 @@ export function ConsolePage() {
         )}
       </div>
       <RecentActivityPane
-        entries={snapshot.logEntries}
-        topology={snapshot.topology}
+        entries={logEntries}
+        topology={topology}
         onFilterById={filterById}
       />
       <TopologyPane
-        topology={snapshot.topology}
+        topology={topology}
         onFilterById={filterById}
         variant="compact"
         onRunStateAll={runStateAll}
-        canRunStateAll={snapshot.connected}
+        canRunStateAll={connected}
         recentDeviceIds={recentDeviceIds}
         filter={topologyFilter}
         onFilterChange={setTopologyFilter}

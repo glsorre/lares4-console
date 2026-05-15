@@ -2,14 +2,6 @@
   "common": {
     "cancel": "Cancel",
     "save": "Save",
-    "delete": "Delete",
-    "edit": "Edit",
-    "close": "Close",
-    "loading": "Loading…",
-    "yes": "Yes",
-    "no": "No",
-    "ok": "OK",
-    "remove": "Remove",
     "dash": "–"
   },
   "stats": {
@@ -350,8 +342,6 @@
       "sidebarOpen": "Open connections panel",
       "hideConnections": "Hide connections",
       "showConnections": "Show connections",
-      "replayStatusTitle": "Replay status",
-      "replayLabel": "replay",
       "clearLogsAria": "Clear logs",
       "clearLogsBtn": "Clear",
       "clearLogsTooltip": "Clear log entries",
@@ -402,7 +392,6 @@
     "skipToMain": "Skip to main content",
     "brand": "Lares4 Console",
     "connectionAria": "Connection: {{label}}. Click to toggle panel.",
-    "replayAria": "Replay: {{label}}",
     "readOnlyAria": "Read-only mode active — device commands are blocked",
     "readOnlyLabel": "Read-only"
   },
@@ -524,5 +513,12 @@
       "clear": "Clear",
       "saving": "Verifying…"
     }
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "description": "The console hit an unexpected error and stopped rendering. Reload the window to recover. If this keeps happening, copy the stack and open a GitHub issue.",
+    "reload": "Reload window",
+    "copied": "Copied!",
+    "copyStack": "Copy stack"
   }
 }

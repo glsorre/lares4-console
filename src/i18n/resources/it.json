@@ -2,14 +2,6 @@
   "common": {
     "cancel": "Annulla",
     "save": "Salva",
-    "delete": "Elimina",
-    "edit": "Modifica",
-    "close": "Chiudi",
-    "loading": "Caricamento…",
-    "yes": "Sì",
-    "no": "No",
-    "ok": "OK",
-    "remove": "Rimuovi",
     "dash": "–"
   },
   "stats": {
@@ -350,8 +342,6 @@
       "sidebarOpen": "Apri pannello connessioni",
       "hideConnections": "Nascondi connessioni",
       "showConnections": "Mostra connessioni",
-      "replayStatusTitle": "Stato replay",
-      "replayLabel": "replay",
       "clearLogsAria": "Cancella log",
       "clearLogsBtn": "Cancella",
       "clearLogsTooltip": "Cancella voci di log",
@@ -402,7 +392,6 @@
     "skipToMain": "Vai al contenuto principale",
     "brand": "Lares4 Console",
     "connectionAria": "Connessione: {{label}}. Clicca per mostrare/nascondere il pannello.",
-    "replayAria": "Replay: {{label}}",
     "readOnlyAria": "Sola lettura attiva — i comandi al dispositivo sono bloccati",
     "readOnlyLabel": "Sola lettura"
   },
@@ -524,5 +513,12 @@
       "clear": "Cancella",
       "saving": "Verifica…"
     }
+  },
+  "errorBoundary": {
+    "title": "Si è verificato un errore",
+    "description": "La console ha incontrato un errore imprevisto e ha smesso di mostrare l'interfaccia. Ricarica la finestra per ripristinarla. Se continua a succedere, copia lo stack e apri una issue su GitHub.",
+    "reload": "Ricarica finestra",
+    "copied": "Copiato!",
+    "copyStack": "Copia stack"
   }
 }

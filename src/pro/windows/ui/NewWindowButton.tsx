@@ -6,16 +6,16 @@ import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock.js';
-import { useSessionController } from '@pro/tabs/context.js';
+import { useLicensed } from '@/desktop/runtime/session-store.js';
 import { useWindows } from '../context.js';
 
 export function NewWindowButton() {
   const { t } = useTranslation();
   const { controller, snapshot } = useWindows();
-  const { snapshot: session } = useSessionController();
+  const licensed = useLicensed();
   const location = useLocation();
 
-  if (!session.licensed.multiwindow) {
+  if (!licensed.multiwindow) {
     return (
       <ProFeatureLock
         featureId="multiwindow"

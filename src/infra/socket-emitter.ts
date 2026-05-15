@@ -1,12 +1,6 @@
-import type { GenericLogger, Lares4WsFactory } from 'lares4-ts';
+import type { Lares4WsFactory } from 'lares4-ts';
 import type { SocketEventEmitted } from './socket-types.js';
-
-export const defaultLogger: GenericLogger = {
-  info: (msg) => console.info(msg),
-  error: (msg) => console.error(msg),
-  warn: (msg) => console.warn(msg),
-  debug: (msg) => console.debug(msg),
-};
+import { defaultLogger } from './lares-logger.js';
 
 /** Wire-layer frame event with the timestamp captured at the moment of send/receive. */
 export interface SocketFrame {
@@ -56,7 +50,10 @@ export function createSocketEmitter(): SocketEmitter {
       if (typeof data === 'string' && sendListeners.size > 0) {
         const frame: SocketFrame = { raw: data, ts: Date.now() };
         for (const listener of sendListeners) {
-          try { listener(frame); } catch { /* never break the send path */ }
+          try { listener(frame); } catch (err) {
+            // Never break the send path — but surface the bug at the console.
+            defaultLogger.warn(`socket send listener threw: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
       }
       origSend(data);
@@ -66,7 +63,9 @@ export function createSocketEmitter(): SocketEmitter {
       if (typeof event.data === 'string' && receiveListeners.size > 0) {
         const frame: SocketFrame = { raw: event.data, ts: Date.now() };
         for (const listener of receiveListeners) {
-          try { listener(frame); } catch { /* never break receive path */ }
+          try { listener(frame); } catch (err) {
+            defaultLogger.warn(`socket receive listener threw: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
       }
     });
@@ -79,7 +78,9 @@ export function createSocketEmitter(): SocketEmitter {
         message: (event as ErrorEvent).message || undefined,
       };
       for (const listener of errorListeners) {
-        try { listener(info); } catch { /* never break ws path */ }
+        try { listener(info); } catch (err) {
+          defaultLogger.warn(`socket error listener threw: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     });
 
@@ -92,7 +93,9 @@ export function createSocketEmitter(): SocketEmitter {
         wasClean: event.wasClean,
       };
       for (const listener of closeListeners) {
-        try { listener(info); } catch { /* never break ws path */ }
+        try { listener(info); } catch (err) {
+          defaultLogger.warn(`socket close listener threw: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     });
 

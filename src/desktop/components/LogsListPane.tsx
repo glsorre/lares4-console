@@ -1,61 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType, ReactNode, SVGProps } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import {
-  Activity,
-  AlertTriangle,
-  ArrowDownLeft,
-  ArrowDownToLine,
-  ArrowUpRight,
-  ChevronDown,
-  ChevronRight,
-  CornerDownLeft,
-  Info,
-  Layers,
-  Pause,
-  Pin,
-  Star,
-  Terminal,
-} from 'lucide-react';
-import { ProFeatureLock } from './ProFeatureLock';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { ArrowDownToLine, Pause, Terminal } from 'lucide-react';
 import { PaneEmpty } from './PaneEmpty.js';
-import { useSessionController } from '@pro/tabs/context.js';
-import { buildMessageListItems, formatLogClock } from '../../core/log-view.js';
+import { useConnectionStatus } from '../runtime/session-store.js';
+import { buildMessageListItems } from '../../core/log-view.js';
 import { compileChipFilters, extractFreeTextTerms } from '../../core/log-query.js';
-import type { LogEntry, LogTag } from '../../core/types.js';
+import type { LogEntry } from '../../core/types.js';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { LogTagChip } from './LogTagChip.js';
-import { RowChip } from './RowChip.js';
-import { ackResultChipClasses } from '../runtime/status-chips.js';
+import { LogRow, ROW_ENTER_CAP } from './LogRow.js';
 
 const TAIL_THRESHOLD_PX = 24;
-
-type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
-
-function getTagIcon(tag: LogTag): IconComp {
-  switch (tag) {
-    case 'RAW_RX': return ArrowDownLeft;
-    case 'RAW_TX': return ArrowUpRight;
-    case 'ACK':    return CornerDownLeft;
-    case 'CHANGE': return Activity;
-    case 'BULK':   return Layers;
-    case 'ERROR':  return AlertTriangle;
-    case 'LOG':    return Terminal;
-    case 'SYSTEM': return Info;
-    default:       return Info;
-  }
-}
-
-const DECODED_WITH_WIRE: ReadonlySet<LogTag> = new Set<LogTag>(['CHANGE', 'BULK', 'LOG']);
-
-function pairedWithWire(item: ReturnType<typeof buildMessageListItems>[number]): boolean {
-  return !!item.wireFrame && DECODED_WITH_WIRE.has(item.tag);
-}
+const ESTIMATED_ROW_HEIGHT = 38;
+const ROW_OVERSCAN = 8;
 
 interface LogsListPaneProps {
   entries: LogEntry[];
@@ -67,9 +28,8 @@ interface LogsListPaneProps {
   pinnedId: string | undefined;
   onPinnedIdChange: (id: string | undefined) => void;
   annotationsLicensed: boolean;
+  disableVirtualization?: boolean;
 }
-
-const ROW_ENTER_CAP = 30;
 
 export function LogsListPane({
   entries,
@@ -81,20 +41,12 @@ export function LogsListPane({
   pinnedId,
   onPinnedIdChange,
   annotationsLicensed,
+  disableVirtualization = false,
 }: LogsListPaneProps) {
   const { t } = useTranslation();
-  const { snapshot } = useSessionController();
-  const connected = snapshot.connected;
+  const { connected } = useConnectionStatus();
   const [followTail, setFollowTail] = useState<boolean>(true);
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleExpand = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
   const reduceMotion = useReducedMotion();
   const animateFromIndex = (idx: number, total: number) => !reduceMotion && idx >= total - ROW_ENTER_CAP;
 
@@ -113,7 +65,7 @@ export function LogsListPane({
     for (const it of items) {
       const childText = it.children?.map((c) => c.line).join('\n') ?? '';
       const haystack = `${it.preview}\n${childText}\n${JSON.stringify(it.payload ?? '')}`.toLowerCase();
-      map.set(it.id, searchTerms.some((t) => haystack.includes(t)));
+      map.set(it.id, searchTerms.some((term) => haystack.includes(term)));
     }
     return map;
   }, [items, searchTerms]);
@@ -136,29 +88,62 @@ export function LogsListPane({
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
   const programmaticScrollDeadlineRef = useRef<number>(0);
 
-  function viewportEl(): HTMLElement | null {
-    return scrollRootRef.current?.querySelector('[data-slot="scroll-area-viewport"]') ?? null;
-  }
+  const viewportEl = useCallback((): HTMLElement | null => {
+    return scrollRootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null;
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: disableVirtualization ? 0 : items.length,
+    getScrollElement: viewportEl,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: ROW_OVERSCAN,
+    getItemKey: (index) => items[index]?.id ?? index,
+  });
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    if (!disableVirtualization) {
+      requestAnimationFrame(() => virtualizer.measure());
+    }
+  }, [disableVirtualization, virtualizer]);
 
   useEffect(() => {
     if (!selectedId) return;
-    document.getElementById(`log-row-${selectedId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [selectedId]);
+    if (disableVirtualization) {
+      document.getElementById(`log-row-${selectedId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+    const idx = items.findIndex((it) => it.id === selectedId);
+    if (idx < 0) return;
+    programmaticScrollDeadlineRef.current = Date.now() + 300;
+    virtualizer.scrollToIndex(idx, { align: 'auto' });
+  }, [selectedId, items, virtualizer, disableVirtualization]);
 
   useEffect(() => {
     if (!followTail || items.length === 0) return;
-    const last = items[items.length - 1];
-    const el = document.getElementById(`log-row-${last.id}`);
-    if (!el) return;
-    const node = viewportEl();
-    if (node) {
-      const elBottom = el.getBoundingClientRect().bottom;
-      const viewBottom = node.getBoundingClientRect().bottom;
-      if (Math.abs(elBottom - viewBottom) < 4) return;
+    if (disableVirtualization) {
+      const last = items[items.length - 1];
+      const el = document.getElementById(`log-row-${last.id}`);
+      if (!el) return;
+      const node = viewportEl();
+      if (node) {
+        const elBottom = el.getBoundingClientRect().bottom;
+        const viewBottom = node.getBoundingClientRect().bottom;
+        if (Math.abs(elBottom - viewBottom) < 4) return;
+      }
+      programmaticScrollDeadlineRef.current = Date.now() + 300;
+      el.scrollIntoView({ block: 'end' });
+      return;
     }
     programmaticScrollDeadlineRef.current = Date.now() + 300;
-    el.scrollIntoView({ block: 'end' });
-  }, [followTail, items]);
+    virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
+  }, [followTail, items, virtualizer, viewportEl, disableVirtualization]);
 
   useEffect(() => {
     const node = viewportEl();
@@ -170,12 +155,15 @@ export function LogsListPane({
     };
     node.addEventListener('scroll', handler, { passive: true });
     return () => node.removeEventListener('scroll', handler);
-  }, [followTail, setFollowTail]);
+  }, [followTail, viewportEl]);
 
   const moveBy = useCallback((currentIndex: number, delta: number) => {
     const next = items[Math.max(0, Math.min(items.length - 1, currentIndex + delta))];
     if (next) onSelect(next.id);
   }, [items, onSelect]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
 
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
@@ -196,7 +184,10 @@ export function LogsListPane({
           <ScrollArea className="min-h-0 flex-1" ref={scrollRootRef}>
             <div
               id="lares4-log-list"
-              className="flex flex-col gap-0.5 px-2 py-2 pb-4"
+              className={cn(
+                'px-2 py-2 pb-4',
+                disableVirtualization && 'flex flex-col gap-0.5',
+              )}
               role="listbox"
               aria-label={t('logs.listAriaLabel')}
               aria-activedescendant={selectedId ? `log-row-${selectedId}` : undefined}
@@ -235,7 +226,7 @@ export function LogsListPane({
             >
               {pinnedItem && annotationsLicensed && (
                 <div className="bg-pane/90 sticky top-0 z-10 -mx-2 mb-1 px-2 pt-1 pb-1 backdrop-blur">
-                  <Row
+                  <LogRow
                     item={pinnedItem}
                     selected={pinnedItem.id === selectedId}
                     bookmarked={bookmarkedIds.has(pinnedItem.id)}
@@ -251,26 +242,70 @@ export function LogsListPane({
                   />
                 </div>
               )}
-              {items.map((item, idx) => (
-                <Row
-                  key={item.id}
-                  item={item}
-                  selected={item.id === selectedId}
-                  bookmarked={bookmarkedIds.has(item.id)}
-                  pinned={item.id === pinnedId}
-                  rowIdPrefix="log-row"
-                  meta={metaByGroupId.get(item.id)}
-                  annotationsLicensed={annotationsLicensed}
-                  searchTerms={searchTerms}
-                  searchMatch={matchByItemId?.get(item.id)}
-                  animateEnter={animateFromIndex(idx, items.length)}
-                  expanded={expandedIds.has(item.id)}
-                  onToggleExpand={toggleExpand}
-                  onSelect={onSelect}
-                  onToggleBookmark={onToggleBookmark}
-                  onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
-                />
-              ))}
+              {disableVirtualization ? (
+                items.map((item, idx) => (
+                  <LogRow
+                    key={item.id}
+                    item={item}
+                    selected={item.id === selectedId}
+                    bookmarked={bookmarkedIds.has(item.id)}
+                    pinned={item.id === pinnedId}
+                    rowIdPrefix="log-row"
+                    meta={metaByGroupId.get(item.id)}
+                    annotationsLicensed={annotationsLicensed}
+                    searchTerms={searchTerms}
+                    searchMatch={matchByItemId?.get(item.id)}
+                    animateEnter={animateFromIndex(idx, items.length)}
+                    expanded={expandedIds.has(item.id)}
+                    onToggleExpand={toggleExpand}
+                    onSelect={onSelect}
+                    onToggleBookmark={onToggleBookmark}
+                    onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
+                  />
+                ))
+              ) : (
+                <div
+                  style={{ height: totalSize, position: 'relative', width: '100%' }}
+                >
+                  {virtualItems.map((virtualItem) => {
+                    const item = items[virtualItem.index];
+                    if (!item) return null;
+                    return (
+                      <div
+                        key={virtualItem.key}
+                        ref={virtualizer.measureElement}
+                        data-index={virtualItem.index}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualItem.start}px)`,
+                          paddingBottom: 2,
+                        }}
+                      >
+                        <LogRow
+                          item={item}
+                          selected={item.id === selectedId}
+                          bookmarked={bookmarkedIds.has(item.id)}
+                          pinned={item.id === pinnedId}
+                          rowIdPrefix="log-row"
+                          meta={metaByGroupId.get(item.id)}
+                          annotationsLicensed={annotationsLicensed}
+                          searchTerms={searchTerms}
+                          searchMatch={matchByItemId?.get(item.id)}
+                          animateEnter={false}
+                          expanded={expandedIds.has(item.id)}
+                          onToggleExpand={toggleExpand}
+                          onSelect={onSelect}
+                          onToggleBookmark={onToggleBookmark}
+                          onTogglePin={() => onPinnedIdChange(pinnedId === item.id ? undefined : item.id)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </ScrollArea>
         )}
@@ -302,225 +337,3 @@ export function LogsListPane({
     </Card>
   );
 }
-
-interface RowProps {
-  item: ReturnType<typeof buildMessageListItems>[number];
-  selected: boolean;
-  bookmarked: boolean;
-  pinned: boolean;
-  rowIdPrefix: string;
-  meta?: { highlight?: LogEntry['highlight'] };
-  annotationsLicensed: boolean;
-  searchTerms: string[];
-  searchMatch?: boolean;
-  animateEnter?: boolean;
-  expanded?: boolean;
-  onSelect: (id: string) => void;
-  onToggleBookmark: (id: string) => void;
-  onTogglePin: () => void;
-  onToggleExpand?: (id: string) => void;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function highlightFragment(text: string, terms: string[]): ReactNode {
-  if (terms.length === 0) return text;
-  const pattern = new RegExp(`(${terms.map(escapeRegex).join('|')})`, 'gi');
-  const parts = text.split(pattern);
-  if (parts.length === 1) return text;
-  return parts.map((part, i) => {
-    if (i % 2 === 1) {
-      return (
-        <mark
-          key={i}
-          className="rounded bg-[oklch(var(--accent)/0.35)] text-foreground px-0.5"
-        >
-          {part}
-        </mark>
-      );
-    }
-    return part;
-  });
-}
-
-const HIGHLIGHT_BG: Record<NonNullable<LogEntry['highlight']>, string> = {
-  red: 'bg-red-100/70 dark:bg-red-950/40 ring-1 ring-red-500/40',
-  amber: 'bg-amber-100/70 dark:bg-amber-950/40 ring-1 ring-amber-500/40',
-  emerald: 'bg-emerald-100/70 dark:bg-emerald-950/40 ring-1 ring-emerald-500/40',
-  blue: 'bg-blue-100/70 dark:bg-blue-950/40 ring-1 ring-blue-500/40',
-  violet: 'bg-violet-100/70 dark:bg-violet-950/40 ring-1 ring-violet-500/40',
-};
-
-function Row({
-  item, selected, bookmarked, pinned, rowIdPrefix, meta,
-  annotationsLicensed,
-  searchTerms, searchMatch, animateEnter,
-  expanded, onToggleExpand,
-  onSelect, onToggleBookmark, onTogglePin,
-}: RowProps) {
-  const { t } = useTranslation();
-  const isError = item.tag === 'ERROR';
-  const isPairedWithWire = pairedWithWire(item);
-  const primaryTag: LogTag = isPairedWithWire ? 'RAW_RX' : item.tag;
-  const Icon = getTagIcon(primaryTag);
-  const highlightCls = meta?.highlight ? HIGHLIGHT_BG[meta.highlight] : undefined;
-  const hasSearch = searchTerms.length > 0;
-  const isMatch = hasSearch && searchMatch === true;
-  const isDimmed = hasSearch && searchMatch === false;
-  const hasChildren = (item.children?.length ?? 0) > 0;
-  const Chevron = expanded ? ChevronDown : ChevronRight;
-  return (
-    <>
-    <motion.div
-      id={`${rowIdPrefix}-${item.id}`}
-      role="option"
-      aria-selected={selected}
-      initial={animateEnter ? { opacity: 0, y: 4 } : false}
-      animate={animateEnter ? { opacity: 1, y: 0 } : undefined}
-      transition={animateEnter ? { duration: 0.12, ease: [0.22, 1, 0.36, 1] } : undefined}
-      className={cn(
-        'hover:bg-muted/80 group relative grid min-h-9 w-full cursor-pointer items-center gap-x-3 rounded-lg border border-transparent pr-2 pl-3 py-1 text-left transition-[opacity,background-color,box-shadow]',
-        'grid-cols-[1rem_minmax(4rem,max-content)_4.5rem_minmax(0,1fr)_auto_auto]',
-        isError && !selected && 'bg-red-50/60 dark:bg-red-950/30',
-        highlightCls && !selected && highlightCls,
-        selected && 'shadow-sm',
-        pinned && !selected && 'border-primary/40 ring-1 ring-primary/25',
-        isMatch && !selected && 'ring-1 ring-[oklch(var(--accent)/0.55)] bg-[oklch(var(--accent)/0.06)]',
-        isDimmed && 'opacity-45',
-      )}
-      style={selected
-        ? {
-            backgroundColor: 'var(--row-selected-bg)',
-            boxShadow: 'inset 2px 0 0 0 var(--row-selected-bar)',
-          }
-        : undefined}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={(event) => {
-        event.currentTarget.parentElement?.focus();
-        onSelect(item.id);
-      }}
-    >
-      <Icon className="size-3.5 text-muted-foreground shrink-0" aria-hidden />
-      <LogTagChip tag={primaryTag} />
-      <span className="text-muted-foreground font-mono text-meta tabular-nums opacity-70">
-        {formatLogClock(item.ts)}
-      </span>
-      <span
-        className="min-w-0 truncate text-row leading-snug flex items-center"
-        style={{
-          maskImage: 'linear-gradient(to right, black 92%, transparent)',
-          WebkitMaskImage: 'linear-gradient(to right, black 92%, transparent)',
-        }}
-      >
-        {hasChildren && onToggleExpand && (
-          <button
-            type="button"
-            aria-label={expanded ? t('logs.collapseAria') : t('logs.expandAria')}
-            aria-expanded={expanded}
-            className="text-muted-foreground hover:text-foreground mr-1 shrink-0 rounded p-0.5"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleExpand(item.id);
-            }}
-          >
-            <Chevron className="size-3.5" aria-hidden />
-          </button>
-        )}
-        <span className="min-w-0 truncate">
-          {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
-          {item.repeat !== undefined && item.repeat > 1 && (
-            <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">{t('logs.row.repeat', { n: item.repeat })}</span>
-          )}
-        </span>
-      </span>
-      <div className="flex shrink-0 items-center">
-        {item.ack ? (
-          <RowChip
-            className={ackResultChipClasses(item.ack.result)}
-            title={`${t('logs.row.ackTitlePrefix')} ${item.ack.result ?? ''}`.trim()}
-          >
-            <span className="font-semibold">{item.ack.result ?? t('logs.row.ackLabel')}</span>
-          </RowChip>
-        ) : isPairedWithWire ? (
-          <LogTagChip
-            tag={item.tag}
-            title={t('logs.row.wireChipTitle')}
-            aria-label={t('logs.row.wireChipAria')}
-          />
-        ) : null}
-      </div>
-      <div
-        className={cn(
-          'flex shrink-0 items-center gap-0.5 transition-opacity focus-within:opacity-100',
-          selected || pinned || bookmarked
-            ? 'opacity-100'
-            : 'opacity-0 group-hover:opacity-100',
-        )}
-      >
-        {annotationsLicensed ? (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={pinned ? t('logs.row.unpinAria') : t('logs.row.pinAria')}
-                  aria-pressed={pinned}
-                  className={cn(
-                    'rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted',
-                    pinned && 'opacity-100 text-primary',
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onTogglePin();
-                  }}
-                >
-                  <Pin className="size-3.5" aria-hidden />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{pinned ? t('logs.row.unpinTooltip') : t('logs.row.pinTooltip')}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={bookmarked ? t('logs.row.unbookmarkAria') : t('logs.row.bookmarkAria')}
-                  aria-pressed={bookmarked}
-                  className={cn(
-                    'rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted',
-                    bookmarked && 'opacity-100 text-amber-500',
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleBookmark(item.id);
-                  }}
-                >
-                  <Star className={cn('size-3.5', bookmarked && 'fill-current')} aria-hidden />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{bookmarked ? t('logs.row.unbookmarkTooltip') : t('logs.row.bookmarkTooltip')}</TooltipContent>
-            </Tooltip>
-          </>
-        ) : (
-          <ProFeatureLock
-            featureId="annotations"
-            label={t('logs.row.annotationsLockLabel')}
-            variant="icon"
-            tooltip={t('logs.row.annotationsLockTooltip')}
-            className="size-7"
-          />
-        )}
-      </div>
-    </motion.div>
-    {hasChildren && expanded && (
-      <div role="presentation" className="text-muted-foreground border-border/40 ml-[7.5rem] mt-0.5 mb-1 flex flex-col gap-0.5 border-l py-1 pl-3 font-mono text-row leading-snug">
-        {item.children!.map((child) => (
-          <div key={child.key} className="truncate">{child.line}</div>
-        ))}
-      </div>
-    )}
-    </>
-  );
-}
-

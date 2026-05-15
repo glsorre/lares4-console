@@ -5,23 +5,21 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConsoleTopBar } from '../../src/desktop/components/ConsoleTopBar.js';
 import { TooltipProvider } from '../../src/components/ui/tooltip.js';
-import type { SessionSnapshot } from '../../src/desktop/runtime/session-controller.js';
+import {
+  INITIAL_SESSION_SNAPSHOT,
+  setSessionSnapshot,
+} from '../../src/desktop/runtime/session-store.js';
 
-const baseSnapshot = {
-  connected: true,
-  connectionStatus: 'online',
-  logEntries: [],
-  pendingTxCount: 0,
-  topology: { total: 0, groups: [] },
-} as unknown as SessionSnapshot;
-
-const disconnectedSnapshot = {
-  ...baseSnapshot,
-  connected: false,
-} as unknown as SessionSnapshot;
+function setConnected(connected: boolean): void {
+  setSessionSnapshot({
+    ...INITIAL_SESSION_SNAPSHOT,
+    connected,
+    connectionStatus: connected ? 'online' : 'idle',
+  });
+}
 
 interface Overrides {
-  snapshot?: SessionSnapshot;
+  connected?: boolean;
   msgCount?: number;
   sidebarOpen?: boolean;
   topologyRailOpen?: boolean;
@@ -33,11 +31,11 @@ interface Overrides {
 }
 
 function Harness(props: Overrides) {
+  setConnected(props.connected ?? true);
   const [search, setSearch] = useState('');
   return (
     <TooltipProvider>
       <ConsoleTopBar
-        snapshot={props.snapshot ?? baseSnapshot}
         msgCount={props.msgCount ?? 0}
         sidebarOpen={props.sidebarOpen ?? false}
         topologyRailOpen={props.topologyRailOpen ?? false}
@@ -57,6 +55,7 @@ function Harness(props: Overrides) {
 
 afterEach(() => {
   cleanup();
+  setSessionSnapshot(INITIAL_SESSION_SNAPSHOT);
 });
 
 describe('ConsoleTopBar', () => {
@@ -88,7 +87,7 @@ describe('ConsoleTopBar', () => {
   });
 
   it('hides the search input when disconnected', () => {
-    render(<Harness snapshot={disconnectedSnapshot} />);
+    render(<Harness connected={false} />);
     assert.equal(screen.queryByLabelText('Search log entries'), null);
   });
 

@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { LogTagChip } from '@/desktop/components/LogTagChip.js';
 import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
-import { useSessionController } from '@pro/tabs/context.js';
+import { useConnectionStatus } from '@/desktop/runtime/session-store.js';
 
 interface BookmarksPaneProps {
   bookmarks: Bookmark[];
@@ -29,8 +29,7 @@ export function BookmarksPane({
   bookmarks, entries, selectedId, onSelect, onRemove, onUpdateNote, onExport, isLicensed,
 }: BookmarksPaneProps) {
   const { t } = useTranslation();
-  const { snapshot } = useSessionController();
-  const connected = snapshot.connected;
+  const { connected } = useConnectionStatus();
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState('');
   const [exportStatus, setExportStatus] = useState<string | undefined>(undefined);

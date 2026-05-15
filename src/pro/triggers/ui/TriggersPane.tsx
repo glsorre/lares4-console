@@ -21,7 +21,7 @@ import {
 } from '../engine.js';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
 import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
-import { useSessionController } from '@pro/tabs/context.js';
+import { useConnectionStatus } from '@/desktop/runtime/session-store.js';
 
 interface TriggersPaneProps {
   triggers: TriggerRule[];
@@ -53,8 +53,7 @@ function generateId(): string {
 
 export function TriggersPane({ triggers, onSave, disabledReason, isLicensed }: TriggersPaneProps) {
   const { t } = useTranslation();
-  const { snapshot } = useSessionController();
-  const connected = snapshot.connected;
+  const { connected } = useConnectionStatus();
   const [draft, setDraft] = useState<TriggerRule[]>(triggers);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);

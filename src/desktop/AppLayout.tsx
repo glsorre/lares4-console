@@ -22,7 +22,7 @@ import {
 import { connectionLabelKey, formatConnectionLabel } from './runtime/connection-label.js';
 import { connectionChipClasses } from './runtime/status-chips.js';
 import { BASE } from './runtime/motion-presets.js';
-import { useSessionController } from '@pro/tabs/context.js';
+import { useConnectionStatus, useReadOnly } from './runtime/session-store.js';
 import { TabsStrip } from '@pro/tabs/ui/TabsStrip.js';
 
 export type LayoutOutletContext = {
@@ -32,15 +32,16 @@ export type LayoutOutletContext = {
 
 export function AppLayout() {
   const { t, i18n } = useTranslation();
-  const { snapshot } = useSessionController();
+  const { connectionStatus } = useConnectionStatus();
+  const readOnly = useReadOnly();
   const location = useLocation();
   const navigate = useNavigate();
   const isMainWindow = useIsMainWindow();
   const isConsole = location.pathname === '/console';
 
   const connectionLabel = (() => {
-    const key = connectionLabelKey(snapshot.connectionStatus);
-    return key ? t(key) : formatConnectionLabel(snapshot.connectionStatus);
+    const key = connectionLabelKey(connectionStatus);
+    return key ? t(key) : formatConnectionLabel(connectionStatus);
   })();
 
   useEffect(() => {
@@ -123,10 +124,10 @@ export function AppLayout() {
 
   // Auto-close sidebar when connected
   useEffect(() => {
-    if (snapshot.connectionStatus === 'online') {
+    if (connectionStatus === 'online') {
       setSidebarOpen(false);
     }
-  }, [snapshot.connectionStatus]);
+  }, [connectionStatus]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -145,7 +146,7 @@ export function AppLayout() {
     };
   }, []);
 
-  const connClasses = connectionChipClasses(snapshot.connectionStatus);
+  const connClasses = connectionChipClasses(connectionStatus);
   const reduceMotion = useReducedMotion();
   const enter = reduceMotion
     ? { initial: false, animate: { opacity: 1, y: 0 }, transition: { duration: 0 } }
@@ -194,7 +195,7 @@ export function AppLayout() {
           >
             <span className="truncate">{connectionLabel}</span>
           </button>
-          {snapshot.readOnly ? (
+          {readOnly ? (
             <div
               className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-100/70 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
               aria-label={t('app.readOnlyAria')}

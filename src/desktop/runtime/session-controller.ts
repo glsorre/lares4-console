@@ -8,7 +8,7 @@ import { executeCommand } from '../../core/command-router.js';
 import type { EventFilter, LogEntry, LogSource, LogTag, OutputFormat } from '../../core/types.js';
 import { nowIso, formatOutput, formatUnknownError, isPlaceholderErrorMessage, shouldPrint } from '../../core/utils.js';
 import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
-import type { SocketCloseInfo, SocketErrorInfo, SocketFrame } from '../../infra/lares4-logger.js';
+import type { SocketCloseInfo, SocketErrorInfo, SocketFrame } from '../../infra/socket-emitter.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
 import { CommandHistory } from '../../core/history.js';
 import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
@@ -188,6 +188,18 @@ export class SessionController {
   private unsubscribeReadOnly: (() => void) | undefined;
   private lastSocketClose: SocketCloseInfo | undefined;
   private lastSocketError: SocketErrorInfo | undefined;
+  /** Snapshot-stability caches. Selector hooks rely on identity equality to skip
+   *  re-renders on unrelated `emit()` calls, so these slices must keep the same
+   *  array/object reference until their underlying source actually changes. */
+  private cachedEventFilters: EventFilter[] = [];
+  private cachedEventFiltersSize = -1;
+  private cachedLicensed: SessionSnapshot['licensed'] = {
+    macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false,
+  };
+  private cachedLogEntries: LogEntry[] = [];
+  private cachedLogEntriesVersion = -1;
+  private cachedBookmarks: Bookmark[] = [];
+  private cachedBookmarksVersion = -1;
 
   constructor(deps: SessionControllerDeps = {}) {
     this.deps = deps;
@@ -244,8 +256,8 @@ export class SessionController {
       connected: this.connected,
       connectionStatus: this.connectionStatus,
       outputFormat: this.outputFormat,
-      eventFilters: Array.from(this.eventFilters),
-      logEntries: this.store.all(),
+      eventFilters: this.snapshotEventFilters(),
+      logEntries: this.snapshotLogEntries(),
       commandLine: this.commandLine,
       error: this.error,
       logTagFilters: this.logTagFilters,
@@ -255,19 +267,56 @@ export class SessionController {
       recordingMacro: this.macroRecordingBuffer !== undefined,
       recordingMacroSteps: this.macroRecordingBuffer?.length ?? 0,
       topology: this.computeTopology(),
-      bookmarks: this.store.listBookmarks(),
+      bookmarks: this.snapshotBookmarks(),
       triggers: this.triggers,
       pendingTxCount: this.pendingTx.size,
       liveStreamPaused: this.liveStreamPaused,
       readOnly: this.readOnly,
-      licensed: {
-        macros: this.isMacrosLicensed(),
-        tabs: this.isTabsLicensed(),
-        triggers: this.isTriggersLicensed(),
-        annotations: this.isAnnotationsLicensed(),
-        multiwindow: this.isMultiwindowLicensed(),
-      },
+      licensed: this.snapshotLicensed(),
     };
+  }
+
+  private snapshotEventFilters(): EventFilter[] {
+    if (this.cachedEventFiltersSize !== this.eventFilters.size) {
+      this.cachedEventFilters = Array.from(this.eventFilters);
+      this.cachedEventFiltersSize = this.eventFilters.size;
+    }
+    return this.cachedEventFilters;
+  }
+
+  private snapshotLogEntries(): LogEntry[] {
+    const version = this.store.version();
+    if (this.cachedLogEntriesVersion !== version) {
+      this.cachedLogEntries = this.store.all();
+      this.cachedLogEntriesVersion = version;
+    }
+    return this.cachedLogEntries;
+  }
+
+  private snapshotBookmarks(): Bookmark[] {
+    const version = this.store.version();
+    if (this.cachedBookmarksVersion !== version) {
+      this.cachedBookmarks = this.store.listBookmarks();
+      this.cachedBookmarksVersion = version;
+    }
+    return this.cachedBookmarks;
+  }
+
+  private snapshotLicensed(): SessionSnapshot['licensed'] {
+    const next = {
+      macros: this.isMacrosLicensed(),
+      tabs: this.isTabsLicensed(),
+      triggers: this.isTriggersLicensed(),
+      annotations: this.isAnnotationsLicensed(),
+      multiwindow: this.isMultiwindowLicensed(),
+    };
+    const cur = this.cachedLicensed;
+    if (cur.macros === next.macros && cur.tabs === next.tabs && cur.triggers === next.triggers
+        && cur.annotations === next.annotations && cur.multiwindow === next.multiwindow) {
+      return cur;
+    }
+    this.cachedLicensed = next;
+    return next;
   }
 
   private computeTopology(): TopologySnapshot {

@@ -29,6 +29,7 @@ interface HarnessProps {
   onToggleBookmark?: (id: string) => void;
   onPinnedIdChange?: (id: string | undefined) => void;
   annotationsLicensed?: boolean;
+  disableVirtualization?: boolean;
 }
 
 function Harness(props: HarnessProps) {
@@ -45,6 +46,7 @@ function Harness(props: HarnessProps) {
           pinnedId={undefined}
           onPinnedIdChange={props.onPinnedIdChange ?? (() => {})}
           annotationsLicensed={props.annotationsLicensed ?? true}
+          disableVirtualization={props.disableVirtualization ?? true}
         />
       </TooltipProvider>
     </TabsProvider>
@@ -160,5 +162,22 @@ describe('LogsListPane', () => {
     ];
     render(<Harness entries={entries} />);
     assert.equal(screen.queryByLabelText('Has paired raw frame'), null);
+  });
+
+  it('with virtualization enabled, only a small window of rows is mounted for large lists', () => {
+    const bulk: LogEntry[] = Array.from({ length: 5000 }, (_, i) =>
+      entry({
+        tag: 'LOG',
+        ts: new Date(1000 + i).toISOString(),
+        message: `msg-${i}`,
+        groupId: `g-${i}`,
+      }),
+    );
+    render(<Harness entries={bulk} disableVirtualization={false} />);
+    assert.ok(screen.getByRole('listbox', { name: 'Log messages' }));
+    // happy-dom reports zero-sized viewport so the virtualizer renders only its
+    // overscan window (or nothing); the contract is that we never DOM-mount
+    // anywhere close to 5000 rows.
+    assert.ok(screen.queryAllByRole('option').length < 100);
   });
 });

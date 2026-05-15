@@ -60,6 +60,17 @@ export interface ChangeChild {
   line: string;
 }
 
+const DECODED_WITH_WIRE: ReadonlySet<LogTag> = new Set<LogTag>(['CHANGE', 'BULK', 'LOG']);
+
+/** Tag shown as the row's primary chip. Decoded entries (CHANGE / BULK / LOG) that
+ *  carry a paired wire frame surface as `RAW_RX` so users see the transport layer
+ *  first; the semantic tag becomes the secondary chip. All other entries keep their
+ *  own tag. Shared by LogRow and LogDetailHeader so the row chip and the detail
+ *  header chip always agree. */
+export function getPrimaryTag(item: Pick<MessageListItem, 'tag' | 'wireFrame'>): LogTag {
+  return item.wireFrame && DECODED_WITH_WIRE.has(item.tag) ? 'RAW_RX' : item.tag;
+}
+
 export interface MergedFrame {
   entryId?: string;
   ts: string;
