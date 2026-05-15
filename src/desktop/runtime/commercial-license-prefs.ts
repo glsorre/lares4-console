@@ -7,9 +7,9 @@ import {
 } from './license-verify.js';
 import { getLicenseTransport } from './license-transport.js';
 
-export type FeatureId = 'macros' | 'tabs' | 'triggers' | 'annotations' | 'multiwindow';
+export type FeatureId = 'macros' | 'tabs' | 'triggers' | 'annotations' | 'multiwindow' | 'sessions';
 
-export const FEATURE_IDS: readonly FeatureId[] = ['macros', 'tabs', 'triggers', 'annotations', 'multiwindow'];
+export const FEATURE_IDS: readonly FeatureId[] = ['macros', 'tabs', 'triggers', 'annotations', 'multiwindow', 'sessions'];
 
 export interface FeatureDescriptor {
   id: FeatureId;
@@ -48,6 +48,12 @@ export const FEATURES: Record<FeatureId, FeatureDescriptor> = {
     description:
       'Multi-window is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to open additional console windows, each with an independent connection.',
   },
+  sessions: {
+    id: 'sessions',
+    title: 'Session history commercial license',
+    description:
+      'Session history is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to persist sessions to SQLite and reopen recent sessions read-only.',
+  },
 };
 
 // In-memory mirror of the keychain. Populated by `bootstrapLicenses` and kept
@@ -62,6 +68,7 @@ const LEGACY_LOCALSTORAGE_KEYS: Readonly<Record<FeatureId | 'bundle', string>> =
   triggers: 'lares4.license.triggers',
   annotations: 'lares4.license.annotations',
   multiwindow: 'lares4.license.multiwindow',
+  sessions: 'lares4.license.sessions',
 };
 const LEGACY_COMMERCIAL_KEY = 'lares4.commercialLicense';
 const MIGRATED_MARKER = '_migrated';

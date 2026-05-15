@@ -51,6 +51,7 @@ export default defineConfig({
       '@pro/triggers': path.resolve(dirname, './src/pro/triggers'),
       '@pro/annotations': path.resolve(dirname, './src/pro/annotations'),
       '@pro/windows': path.resolve(dirname, './src/pro/windows'),
+      '@pro/sessions': path.resolve(dirname, './src/pro/sessions'),
       '@': path.resolve(dirname, './src'),
       ws: path.resolve(dirname, './src/infra/ws-browser-shim.ts'),
     },

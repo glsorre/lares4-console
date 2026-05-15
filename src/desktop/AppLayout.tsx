@@ -12,6 +12,7 @@ import { LanguageToggle } from './components/LanguageToggle.js';
 import { ReadOnlyToggle } from './components/ReadOnlyToggle.js';
 import { UpdateBanner } from './components/UpdateBanner.js';
 import { NewWindowButton } from '@pro/windows/ui/NewWindowButton.js';
+import { HistoryNavButton } from '@pro/sessions/HistoryNavButton.js';
 import { useIsMainWindow } from '@pro/windows/context.js';
 import {
   getUpdaterAdapter,
@@ -207,6 +208,7 @@ export function AppLayout() {
 
         {/* Right */}
         <div className="flex shrink-0 items-center gap-1.5">
+          <HistoryNavButton />
           <NewWindowButton />
           <ReadOnlyToggle />
           <LanguageToggle />

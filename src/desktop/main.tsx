@@ -5,6 +5,7 @@ import { AppShell } from './AppShell.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { TabsProvider } from '@pro/tabs/context.js';
 import { WindowsProvider } from '@pro/windows/context.js';
+import { SessionsProvider } from '@pro/sessions/index.js';
 import { bootstrapLicenses } from './runtime/commercial-license-prefs.js';
 import { initI18n } from '../i18n/index.js';
 import './styles.css';
@@ -16,7 +17,9 @@ function render(): void {
         <HashRouter>
           <WindowsProvider>
             <TabsProvider>
-              <AppShell />
+              <SessionsProvider>
+                <AppShell />
+              </SessionsProvider>
             </TabsProvider>
           </WindowsProvider>
         </HashRouter>

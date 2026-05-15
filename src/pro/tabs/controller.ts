@@ -129,6 +129,10 @@ export class TabsController {
     return tab.controller;
   }
 
+  controllerForTab(id: string): SessionController | null {
+    return this.tabs.find((t) => t.id === id)?.controller ?? null;
+  }
+
   snapshot(): TabsSnapshot {
     const metas: TabMeta[] = this.tabs.map((tab) => {
       const s = tab.controller.snapshot();

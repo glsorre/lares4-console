@@ -27,7 +27,7 @@ export const INITIAL_SESSION_SNAPSHOT: SessionSnapshot = {
   pendingTxCount: 0,
   liveStreamPaused: false,
   readOnly: false,
-  licensed: { macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false },
+  licensed: { macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false },
 };
 
 /** Global store mirroring the active tab's SessionController.snapshot().

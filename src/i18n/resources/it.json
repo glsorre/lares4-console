@@ -2,6 +2,7 @@
   "common": {
     "cancel": "Annulla",
     "save": "Salva",
+    "delete": "Elimina",
     "dash": "–"
   },
   "stats": {
@@ -57,6 +58,12 @@
     },
     "windows": {
       "newWindow": "Nuova finestra"
+    },
+    "sessions": {
+      "navLabel": "Cronologia",
+      "navBackLabel": "Torna alla console",
+      "lockLabel": "Cronologia sessioni",
+      "lockDescription": "Salva le sessioni live in un database SQLite locale e riaprile in sola lettura. Richiede licenza commerciale."
     },
     "bookmarks": {
       "exportAria": "Esporta segnalibri",
@@ -470,7 +477,8 @@
       "tabs": "Schede",
       "triggers": "Trigger",
       "annotations": "Pin e segnalibri",
-      "multiwindow": "Multi-finestra"
+      "multiwindow": "Multi-finestra",
+      "sessions": "Cronologia sessioni"
     }
   },
   "license": {
@@ -494,6 +502,10 @@
       "multiwindow": {
         "title": "Licenza commerciale Multi-finestra",
         "description": "Multi-finestra è sotto PolyForm Noncommercial 1.0.0. Gratis per uso personale, educativo, di ricerca e per organizzazioni non commerciali. L'uso commerciale richiede una licenza — incolla la tua chiave firmata qui sotto per aprire altre finestre console, ciascuna con una connessione indipendente."
+      },
+      "sessions": {
+        "title": "Licenza commerciale Cronologia sessioni",
+        "description": "La cronologia sessioni è sotto PolyForm Noncommercial 1.0.0. Gratis per uso personale, educativo, di ricerca e per organizzazioni non commerciali. L'uso commerciale richiede una licenza — incolla la tua chiave firmata qui sotto per salvare le sessioni in SQLite e riaprirle in sola lettura."
       }
     },
     "verify": {
@@ -527,5 +539,24 @@
     "reload": "Ricarica finestra",
     "copied": "Copiato!",
     "copyStack": "Copia stack"
+  },
+  "history": {
+    "title": "Cronologia sessioni",
+    "count_one": "{{count}} salvata",
+    "count_other": "{{count}} salvate",
+    "loading": "Caricamento…",
+    "empty": "Nessuna sessione salvata. Connetti un pannello per iniziare a registrare.",
+    "noProfile": "Nessun profilo",
+    "openSuffix": "in corso",
+    "logCount_one": "{{count}} voce",
+    "logCount_other": "{{count}} voci",
+    "deleteAria": "Elimina sessione",
+    "deleteTitle": "Eliminare la sessione?",
+    "deleteDescription": "Questa azione rimuove definitivamente la sessione e le sue voci di log dal database locale.",
+    "invalidId": "Id sessione non valido.",
+    "notFound": "Sessione non trovata.",
+    "backLabel": "Indietro",
+    "exportLabel": "Esporta",
+    "exportDialogTitle": "Esporta log sessione"
   }
 }

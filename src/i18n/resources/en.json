@@ -2,6 +2,7 @@
   "common": {
     "cancel": "Cancel",
     "save": "Save",
+    "delete": "Delete",
     "dash": "–"
   },
   "stats": {
@@ -57,6 +58,12 @@
     },
     "windows": {
       "newWindow": "New window"
+    },
+    "sessions": {
+      "navLabel": "History",
+      "navBackLabel": "Back to console",
+      "lockLabel": "Session history",
+      "lockDescription": "Persist live sessions to a local SQLite database and reopen them read-only. Commercial license required."
     },
     "bookmarks": {
       "exportAria": "Export bookmarks",
@@ -470,7 +477,8 @@
       "tabs": "Tabs",
       "triggers": "Triggers",
       "annotations": "Pin & bookmarks",
-      "multiwindow": "Multi-window"
+      "multiwindow": "Multi-window",
+      "sessions": "Session history"
     }
   },
   "license": {
@@ -494,6 +502,10 @@
       "multiwindow": {
         "title": "Multi-window commercial license",
         "description": "Multi-window is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to open additional console windows, each with an independent connection."
+      },
+      "sessions": {
+        "title": "Session history commercial license",
+        "description": "Session history is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to persist sessions to SQLite and reopen recent sessions read-only."
       }
     },
     "verify": {
@@ -527,5 +539,24 @@
     "reload": "Reload window",
     "copied": "Copied!",
     "copyStack": "Copy stack"
+  },
+  "history": {
+    "title": "Session history",
+    "count_one": "{{count}} stored",
+    "count_other": "{{count}} stored",
+    "loading": "Loading…",
+    "empty": "No saved sessions yet. Connect to a panel to start recording.",
+    "noProfile": "No profile",
+    "openSuffix": "ongoing",
+    "logCount_one": "{{count}} entry",
+    "logCount_other": "{{count}} entries",
+    "deleteAria": "Delete session",
+    "deleteTitle": "Delete session?",
+    "deleteDescription": "This permanently removes the session and its log entries from the local database.",
+    "invalidId": "Invalid session id.",
+    "notFound": "Session not found.",
+    "backLabel": "Back",
+    "exportLabel": "Export",
+    "exportDialogTitle": "Export session log"
   }
 }

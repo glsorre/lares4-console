@@ -133,6 +133,17 @@ describe('SessionController', () => {
     assert.equal(c.snapshot().connected, false);
   });
 
+  it('disconnect clears in-memory log entries', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    assert.ok(c.snapshot().logEntries.length > 0);
+    c.disconnect();
+    assert.equal(c.snapshot().logEntries.length, 0);
+  });
+
   it('setDefaultProfileName updates stored default', async () => {
     const initial = JSON.stringify({
       version: 1,

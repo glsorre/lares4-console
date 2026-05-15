@@ -14,11 +14,14 @@ interface LogDetailPaneProps {
   selectedId?: string;
   outputFormat: OutputFormat;
   onFormatChange?: (fmt: OutputFormat) => void;
+  /** When true, render content regardless of live connection (e.g. read-only replay). */
+  forceConnected?: boolean;
 }
 
-export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChange }: LogDetailPaneProps) {
+export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChange, forceConnected = false }: LogDetailPaneProps) {
   const { t } = useTranslation();
-  const { connected } = useConnectionStatus();
+  const { connected: liveConnected } = useConnectionStatus();
+  const connected = forceConnected || liveConnected;
   const [wrapLines, setWrapLines] = useState(true);
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('decoded');

@@ -110,6 +110,7 @@ export interface SessionSnapshot {
     triggers: boolean;
     annotations: boolean;
     multiwindow: boolean;
+    sessions: boolean;
   };
 }
 
@@ -126,6 +127,7 @@ export interface SessionControllerDeps {
   isTriggersLicensed?: () => boolean;
   isAnnotationsLicensed?: () => boolean;
   isMultiwindowLicensed?: () => boolean;
+  isSessionsLicensed?: () => boolean;
 }
 
 function generateId(): string {
@@ -161,6 +163,7 @@ export class SessionController {
   private readonly isTriggersLicensed: () => boolean;
   private readonly isAnnotationsLicensed: () => boolean;
   private readonly isMultiwindowLicensed: () => boolean;
+  private readonly isSessionsLicensed: () => boolean;
   private triggers: TriggerRule[] = [];
   private readonly pendingTx = new Map<string, {
     sentAtMs: number;
@@ -204,7 +207,7 @@ export class SessionController {
   private cachedEventFilters: EventFilter[] = [];
   private cachedEventFiltersSize = -1;
   private cachedLicensed: SessionSnapshot['licensed'] = {
-    macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false,
+    macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false,
   };
   private cachedLogEntries: LogEntry[] = [];
   private cachedLogEntriesVersion = -1;
@@ -226,6 +229,7 @@ export class SessionController {
     this.isTriggersLicensed = deps.isTriggersLicensed ?? (() => isFeatureLicensed('triggers'));
     this.isAnnotationsLicensed = deps.isAnnotationsLicensed ?? (() => isFeatureLicensed('annotations'));
     this.isMultiwindowLicensed = deps.isMultiwindowLicensed ?? (() => isFeatureLicensed('multiwindow'));
+    this.isSessionsLicensed = deps.isSessionsLicensed ?? (() => isFeatureLicensed('sessions'));
     this.macroEngine = new MacroEngine(
       async (line) => {
         this.submittingFromMacro = true;
@@ -331,10 +335,12 @@ export class SessionController {
       triggers: this.isTriggersLicensed(),
       annotations: this.isAnnotationsLicensed(),
       multiwindow: this.isMultiwindowLicensed(),
+      sessions: this.isSessionsLicensed(),
     };
     const cur = this.cachedLicensed;
     if (cur.macros === next.macros && cur.tabs === next.tabs && cur.triggers === next.triggers
-        && cur.annotations === next.annotations && cur.multiwindow === next.multiwindow) {
+        && cur.annotations === next.annotations && cur.multiwindow === next.multiwindow
+        && cur.sessions === next.sessions) {
       return cur;
     }
     this.cachedLicensed = next;
@@ -500,6 +506,7 @@ export class SessionController {
     this.activeProfileName = undefined;
     this.lastSocketClose = undefined;
     this.lastSocketError = undefined;
+    this.store.clear();
     this.emit();
   }
 

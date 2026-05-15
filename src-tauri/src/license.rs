@@ -39,7 +39,7 @@ impl VerifyResult {
 fn is_valid_feature_claim(value: &str) -> bool {
     matches!(
         value,
-        "macros" | "tabs" | "triggers" | "annotations" | "multiwindow" | "*"
+        "macros" | "tabs" | "triggers" | "annotations" | "multiwindow" | "sessions" | "*"
     )
 }
 
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn bundle_token_unlocks_any_feature() {
         let token = mint(&payload("*", None));
-        for f in ["macros", "tabs", "triggers", "annotations", "multiwindow"] {
+        for f in ["macros", "tabs", "triggers", "annotations", "multiwindow", "sessions"] {
             let r = verify_token(&token, f, &keys());
             assert!(r.ok, "bundle should unlock {f}");
         }

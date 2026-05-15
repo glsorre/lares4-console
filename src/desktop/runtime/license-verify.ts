@@ -3,7 +3,7 @@ import { getLicenseTransport } from './license-transport.js';
 export const TOKEN_PREFIX = 'LARES4-';
 export const PAYLOAD_VERSION = 1;
 
-export type LicenseFeatureClaim = 'macros' | 'tabs' | 'triggers' | 'annotations' | 'multiwindow' | '*';
+export type LicenseFeatureClaim = 'macros' | 'tabs' | 'triggers' | 'annotations' | 'multiwindow' | 'sessions' | '*';
 
 export interface LicensePayload {
   readonly v: number;
