@@ -21,6 +21,8 @@ export interface LogEntry {
    */
   source?: LogSource;
   message: string;
+  /** Typed command string for the first entry of a command-source group (e.g. `"help"`, `"state all"`). */
+  command?: string;
   /** Shared id for lines that belong to the same rendered message block. */
   groupId?: string;
   payload?: unknown;
@@ -45,6 +47,16 @@ export interface LogEntry {
     payload?: unknown;
     ts?: string;
   };
+  /**
+   * Raw wire frame paired with this decoded entry. Set on CHANGE/BULK/LOG entries when the
+   * inbound frame did not produce its own RAW_RX row (raw filter off, or correlated/ACK match
+   * suppressed it) so the detail pane can still surface the wire payload.
+   */
+  wireFrame?: {
+    payload?: unknown;
+    content: string;
+    ts: string;
+  };
 }
 
 /** Read the entry's source, defaulting to `'lifecycle'` for entries persisted before the field existed. */
@@ -55,7 +67,6 @@ export function entrySource(entry: Pick<LogEntry, 'source'>): LogSource {
 export interface UiState {
   wrapEnabled: boolean;
   horizontalOffset: number;
-  rawFullEnabled: boolean;
   followTail: boolean;
   scrollOffset: number;
   commandLine: string;

@@ -17,7 +17,7 @@ import {
 } from '../src/core/log-view.js';
 import { sliceRenderedLine, wrapRenderedLine } from '../src/core/render.js';
 import { DEFAULT_EVENT_FILTERS } from '../src/core/defaults.js';
-import type { EventFilter, LogEntry } from '../src/core/types.js';
+import type { LogEntry } from '../src/core/types.js';
 import { parseCommandTokens } from '../src/core/parsers.js';
 import { formatOutput, formatUnknownError, isPlaceholderErrorMessage } from '../src/core/utils.js';
 
@@ -35,11 +35,11 @@ describe('autocomplete', () => {
   });
 
   it('continues completion suggestions after first tab-applied token', () => {
-    const afterFirstCompletion = applyCompletion('fo', 'format');
-    assert.equal(afterFirstCompletion, 'format ');
+    const afterFirstCompletion = applyCompletion('st', 'state');
+    assert.equal(afterFirstCompletion, 'state ');
     const suggestions = suggestCompletions(afterFirstCompletion);
-    assert.ok(suggestions.includes('pretty'));
-    assert.ok(suggestions.includes('json'));
+    assert.ok(suggestions.includes('all'));
+    assert.ok(suggestions.includes('lights'));
   });
 
   it('suggests state scopes', () => {
@@ -61,20 +61,10 @@ describe('autocomplete', () => {
   });
 
   it('suggests second token after trailing space', () => {
-    const formatSuggestions = suggestCompletions('format ');
-    assert.ok(formatSuggestions.includes('pretty'));
-    assert.ok(formatSuggestions.includes('json'));
-
-    const eventSuggestions = suggestCompletions('events ');
-    assert.ok(eventSuggestions.includes('all'));
-    assert.ok(eventSuggestions.includes('none'));
-    assert.ok(eventSuggestions.includes('raw'));
-  });
-
-  it('suggests raw full values after trailing space', () => {
-    const suggestions = suggestCompletions('raw full ');
-    assert.ok(suggestions.includes('on'));
-    assert.ok(suggestions.includes('off'));
+    const stateSuggestions = suggestCompletions('state ');
+    assert.ok(stateSuggestions.includes('all'));
+    assert.ok(stateSuggestions.includes('lights'));
+    assert.ok(stateSuggestions.includes('zones'));
   });
 });
 
@@ -386,6 +376,7 @@ describe('render helpers', () => {
     assert.equal(items.length, 1);
     assert.equal(items[0]?.ack?.result, 'OK');
     assert.equal(items[0]?.ack?.latencyMs, 142);
+    assert.equal(items[0]?.correlationId, '42');
   });
 
   it('leaves ack undefined when no group entry carries it', () => {
@@ -401,6 +392,142 @@ describe('render helpers', () => {
     ];
     const items = buildMessageListItems(entries);
     assert.equal(items[0]?.ack, undefined);
+    assert.equal(items[0]?.correlationId, '99');
+  });
+
+  it('groups RAW_RX with its decoded CHANGE counterpart when groupId shared', () => {
+    const rawPayload = { CMD: 'REALTIME', PAYLOAD_TYPE: 'CHANGES', PAYLOAD: { 'lares4 console': { LIGHTS: [{ ID: '1', STA: 'ON' }] } } };
+    const decodedPayload = { 'lares4 console': { LIGHTS: [{ ID: '1', STA: 'ON' }] } };
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(2000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        source: 'wire',
+        groupId: 'wire-1',
+        message: '← REALTIME/CHANGES',
+        payload: rawPayload,
+      },
+      {
+        ts: new Date(2001).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        source: 'lifecycle',
+        groupId: 'wire-1',
+        message: 'lares4 console',
+        payload: decodedPayload,
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'CHANGE');
+    assert.deepEqual(items[0]?.payload, decodedPayload);
+    assert.equal(items[0]?.ts, new Date(2001).toISOString());
+    assert.deepEqual(items[0]?.wireFrame?.payload, rawPayload);
+    assert.equal(items[0]?.wireFrame?.ts, new Date(2000).toISOString());
+    assert.equal(items[0]?.wireFrame?.content, '← REALTIME/CHANGES');
+    assert.equal(items[0]?.source, 'lifecycle');
+  });
+
+  it('groups RAW_RX with its decoded BULK counterpart when groupId shared', () => {
+    const rawPayload = { CMD: 'REALTIME', PAYLOAD_TYPE: 'MULTI_TYPES' };
+    const decodedPayload = { LIGHTS: [{ ID: '1' }], COVERS: [{ ID: '2' }] };
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(3000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        source: 'wire',
+        groupId: 'wire-7',
+        message: '← MULTI_TYPES',
+        payload: rawPayload,
+      },
+      {
+        ts: new Date(3001).toISOString(),
+        level: 'info',
+        tag: 'BULK',
+        source: 'lifecycle',
+        groupId: 'wire-7',
+        message: '2 types: LIGHTS, COVERS',
+        payload: decodedPayload,
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'BULK');
+    assert.deepEqual(items[0]?.wireFrame?.payload, rawPayload);
+    assert.deepEqual(items[0]?.payload, decodedPayload);
+  });
+
+  it('keeps RAW_RX tag when no semantic twin shares the group', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(4000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        source: 'wire',
+        groupId: 'wire-9',
+        message: '← UNKNOWN_FRAME',
+        payload: { CMD: 'UNKNOWN' },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'RAW_RX');
+    assert.equal(items[0]?.wireFrame, undefined);
+  });
+
+  it('keeps CHANGE alone when no RAW_RX twin exists (raw filter off)', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(5000).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        source: 'lifecycle',
+        message: 'lares4 console',
+        payload: { 'lares4 console': { LIGHTS: [{ ID: '1', STA: 'ON' }] } },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'CHANGE');
+    assert.equal(items[0]?.wireFrame, undefined);
+  });
+
+  it('preserves children + correlationId on a wire-paired CHANGE item', () => {
+    const decodedPayload = {
+      'lares4 console': {
+        LIGHTS: [{ ID: '1', STA: 'ON' }, { ID: '2', STA: 'OFF' }],
+        OUTPUTS: [{ ID: '3', STA: 'DOWN' }],
+      },
+    };
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(6000).toISOString(),
+        level: 'debug',
+        tag: 'RAW_RX',
+        source: 'wire',
+        groupId: 'wire-12',
+        correlationId: 'wire-12',
+        message: '← CHANGES',
+        payload: { CMD: 'REALTIME', PAYLOAD_TYPE: 'CHANGES', PAYLOAD: decodedPayload },
+      },
+      {
+        ts: new Date(6001).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        source: 'lifecycle',
+        groupId: 'wire-12',
+        message: 'lares4 console',
+        payload: decodedPayload,
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'CHANGE');
+    assert.equal(items[0]?.correlationId, 'wire-12');
+    assert.ok((items[0]?.children?.length ?? 0) >= 2, 'expected children extracted from decoded payload');
+    assert.ok(items[0]?.wireFrame !== undefined);
   });
 
   it('extractChangeChildren unwraps sender, summarizes, and lists children', () => {
@@ -411,9 +538,10 @@ describe('render helpers', () => {
       },
     };
     const result = extractChangeChildren(payload);
-    assert.equal(result.children.length, 3);
-    assert.equal(result.summary, '3 items · LIGHTS×2 OUTPUTS×1');
-    assert.equal(result.children[0]?.line, 'LIGHTS[1] STA=ON');
+    assert.equal(result.children.length, 2);
+    assert.equal(result.summary, '3 items');
+    assert.equal(result.children[0]?.line, 'LIGHTS');
+    assert.equal(result.children[1]?.line, 'OUTPUTS');
   });
 
   it('extractChangeChildren handles BULK shape without sender wrapper', () => {
@@ -423,7 +551,7 @@ describe('render helpers', () => {
     };
     const result = extractChangeChildren(payload);
     assert.equal(result.children.length, 2);
-    assert.equal(result.summary, '2 items · LIGHTS×1 OUTPUTS×1');
+    assert.equal(result.summary, '2 items');
   });
 
   it('extractChangeChildren returns empty for unrecognized shapes', () => {
@@ -432,7 +560,7 @@ describe('render helpers', () => {
     assert.equal(extractChangeChildren({}).children.length, 0);
   });
 
-  it('single-item CHANGE keeps original preview and gets no children (no chevron)', () => {
+  it('single-item CHANGE shows inner device key (no chevron)', () => {
     const entries: LogEntry[] = [
       {
         ts: new Date(1000).toISOString(),
@@ -450,8 +578,30 @@ describe('render helpers', () => {
     const items = buildMessageListItems(entries);
     assert.equal(items.length, 1);
     assert.equal(items[0]?.children, undefined);
-    // Falls back to summarizeForPreview's CHANGE branch — sender key with bracketed id.
-    assert.ok(items[0]?.preview && !items[0]!.preview.startsWith('1 items'));
+    assert.equal(items[0]?.preview, 'LIGHTS');
+  });
+
+  it('single-item CHANGE with STATUS_SYSTEM unwraps sender and shows inner key', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'CHANGE',
+        groupId: 'change-status',
+        message: 'change',
+        payload: {
+          'lares4 console': {
+            STATUS_SYSTEM: { ID: 1, INFO: [] },
+          },
+        },
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.ok(items[0]?.preview?.startsWith('STATUS_SYSTEM'),
+      `expected preview to start with STATUS_SYSTEM, got: ${String(items[0]?.preview)}`);
+    assert.ok(!items[0]!.preview.includes('lares4 console'),
+      `expected sender wrapper to be stripped, got: ${items[0]!.preview}`);
   });
 
   it('merged consecutive RAW_RX rows collect both payloads in order', () => {
@@ -536,8 +686,25 @@ describe('render helpers', () => {
     ];
     const items = buildMessageListItems(entries);
     assert.equal(items.length, 1);
-    assert.equal(items[0]?.children?.length, 2);
-    assert.equal(items[0]?.preview, '2 items · LIGHTS×2');
+    assert.equal(items[0]?.children, undefined);
+    assert.equal(items[0]?.preview, 'LIGHTS');
+  });
+
+  it('LOG rows in a command group omit the `> ` prefix on the preview', () => {
+    const entries: LogEntry[] = [
+      {
+        ts: new Date(1000).toISOString(),
+        level: 'info',
+        tag: 'LOG',
+        groupId: 'cmd-1',
+        message: 'state thermostats',
+        command: 'state thermostats',
+      },
+    ];
+    const items = buildMessageListItems(entries);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.tag, 'LOG');
+    assert.equal(items[0]?.preview, 'state thermostats');
   });
 });
 
@@ -555,12 +722,6 @@ describe('command router', () => {
     },
     socketSend: () => undefined,
     outputFormat: 'json' as const,
-    eventFilters: new Set<EventFilter>(['all']),
-    onEventFiltersChanged: () => undefined,
-    onFormatChanged: () => undefined,
-    rawFullEnabled: false,
-    onRawFullChanged: () => undefined,
-    onExport: async () => 'x.log',
     getStateSnapshot: (scope: string) => ({ scope }),
   };
 
@@ -568,16 +729,6 @@ describe('command router', () => {
     ...baseCtx,
     outputFormat: 'pretty' as const,
   };
-
-  it('toggles raw full mode', async () => {
-    let changed = false;
-    const lines = await executeCommand('raw full on', {
-      ...baseCtx,
-      onRawFullChanged: () => { changed = true; },
-    });
-    assert.ok(changed);
-    assert.ok(textOf(lines[0]).includes('on'));
-  });
 
   it('supports raw sendcmd', async () => {
     let sent: unknown[] = [];
@@ -618,20 +769,6 @@ describe('command router', () => {
     assert.ok(textOf(jsonLines[0]).includes('"level": 90'));
   });
 
-  it('reports current format when no format arg is provided', async () => {
-    const pretty = await executeCommand('format', {
-      ...baseCtx,
-      outputFormat: 'pretty',
-    });
-    assert.equal(textOf(pretty[0]), 'Output format: pretty');
-
-    const json = await executeCommand('format', {
-      ...baseCtx,
-      outputFormat: 'json',
-    });
-    assert.equal(textOf(json[0]), 'Output format: json');
-  });
-
   it('renders pretty output for state zones and status paths', async () => {
     const zonesState = await executeCommand('state zones', {
       ...prettyBaseCtx,
@@ -659,18 +796,6 @@ describe('command router', () => {
     assert.equal(textOf(lines[0]), 'No data available for state scope: zones');
   });
 
-  it('reports events filter changes', async () => {
-    let next = '';
-    const lines = await executeCommand('events acks,raw', {
-      ...baseCtx,
-      onEventFiltersChanged: (filters) => {
-        next = Array.from(filters).join(',');
-      },
-    });
-    assert.equal(next, 'acks,raw');
-    assert.ok(textOf(lines[0]).includes('acks,raw'));
-  });
-
   it('throws explicit unsupported error for unknown command', async () => {
     await assert.rejects(
       () => executeCommand('badcmd', baseCtx),
@@ -686,18 +811,6 @@ describe('command router', () => {
         && error.message.includes('Unsupported command usage for "state". Usage: state ')
         && error.message.includes('thermostats|zones|scenarios|system|outputs'),
     );
-  });
-
-  it('throws explicit unsupported error for invalid events filter', async () => {
-    await assert.rejects(
-      () => executeCommand('events all,invalid', baseCtx),
-      /Unsupported command usage for "events"\. Usage: events none\|all\|acks,errors,multitypes,raw,changes,sent\./,
-    );
-  });
-
-  it('returns sentinel on quit command', async () => {
-    const lines = await executeCommand('quit', baseCtx);
-    assert.equal(textOf(lines[0]), '__EXIT__');
   });
 
   it('supports quoted tokens in command line parser', () => {

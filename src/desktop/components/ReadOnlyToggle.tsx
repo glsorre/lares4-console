@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isReadOnlyMode, setReadOnlyMode, subscribeReadOnlyMode } from '../runtime/read-only-prefs.js';
 
 export function ReadOnlyToggle() {
+  const { t } = useTranslation();
   const [active, setActive] = useState<boolean>(() => isReadOnlyMode());
 
   useEffect(() => {
@@ -12,9 +14,7 @@ export function ReadOnlyToggle() {
   }, []);
 
   const toggle = () => setReadOnlyMode(!active);
-  const label = active
-    ? 'Read-only mode on (click to disable)'
-    : 'Read-only mode off (click to enable)';
+  const label = active ? t('readOnly.onLabel') : t('readOnly.offLabel');
 
   return (
     <Button

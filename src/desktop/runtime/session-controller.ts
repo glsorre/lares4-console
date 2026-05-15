@@ -6,15 +6,13 @@ import type { TriggerRule } from '@pro/triggers/types.js';
 import { DEFAULT_EVENT_FILTERS } from '../../core/defaults.js';
 import { executeCommand } from '../../core/command-router.js';
 import type { EventFilter, LogEntry, LogSource, LogTag, OutputFormat } from '../../core/types.js';
-import { nowIso, safeJson, formatOutput, formatUnknownError, isPlaceholderErrorMessage, shouldPrint } from '../../core/utils.js';
+import { nowIso, formatOutput, formatUnknownError, isPlaceholderErrorMessage, shouldPrint } from '../../core/utils.js';
 import { createLaresClient, type ClientEnv, type CreateLaresClientOptions } from '../../infra/lares-client.js';
 import type { SocketCloseInfo, SocketErrorInfo, SocketFrame } from '../../infra/lares4-logger.js';
 import type { SocketEventEmitted } from '../../infra/socket-types.js';
 import { CommandHistory } from '../../core/history.js';
 import { DesktopProfilesRepository } from './profiles-repository-desktop.js';
-import { readUtf8File, resolveDefaultSessionPath, writeUtf8File } from './tauri-fs.js';
-import type { ReplayEvent } from '../../core/replay-engine.js';
-import { ReplayEngine } from '../../core/replay-engine.js';
+import { resolveDefaultSessionPath, writeUtf8File } from './tauri-fs.js';
 import type { Macro, MacroStep } from '@pro/macros/types.js';
 import { MacroEngine } from '@pro/macros/engine.js';
 import { isFeatureLicensed } from './commercial-license-prefs.js';
@@ -24,6 +22,31 @@ import { createReadOnlyGuard, ReadOnlyBlockedError } from './read-only-guard.js'
 type ConnectionStatus = 'idle' | 'connecting' | 'online' | 'error';
 
 const PENDING_TX_TIMEOUT_MS = 30_000;
+/** Upper bound on the wire-frame → typed-event pairing window. Larger than any plausible
+ *  in-flight dispatch delay; smaller than the panel's ~10s heartbeat so cross-heartbeat
+ *  stashes never confuse the pairer. */
+const WIRE_PENDING_TTL_MS = 2_000;
+const WIRE_PENDING_MAX = 32;
+
+/** Deterministic JSON stringify (sorted keys) so two structurally equal payloads emitted
+ *  from different code paths still produce the same key. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
+
+/** Extract the body that lares4-ts will publish as the `change`/`multi_types` event message.
+ *  For an unsolicited REALTIME frame this is `wirePayload.PAYLOAD`; for a typed event keyed
+ *  on PAYLOAD_TYPE the message is `{sender: {PAYLOAD_TYPE: PAYLOAD[PAYLOAD_TYPE]}}`. We
+ *  match on `PAYLOAD` (the broader of the two) so the recency fallback handles the narrower
+ *  case without false positives. */
+function extractWirePayloadBody(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  return (payload as Record<string, unknown>).PAYLOAD;
+}
 
 function extractAckResult(payload: unknown): string | undefined {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
@@ -55,7 +78,6 @@ export interface ActiveMacroSnapshot {
 export interface SessionSnapshot {
   connected: boolean;
   connectionStatus: ConnectionStatus;
-  replayStatus: string;
   outputFormat: OutputFormat;
   eventFilters: EventFilter[];
   logEntries: LogEntry[];
@@ -103,32 +125,6 @@ function generateId(): string {
   return `m-${String(Date.now())}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function parseReplayContent(raw: string): ReplayEvent[] {
-  const events: ReplayEvent[] = [];
-  const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
-  for (const line of lines) {
-    const parsed = JSON.parse(line) as Partial<ReplayEvent>;
-    if (typeof parsed.atMs !== 'number' || !parsed.entry) continue;
-    const entry = parsed.entry as Partial<LogEntry>;
-    if (!entry.ts || !entry.tag || !entry.level || !entry.message) continue;
-    const source: LogEntry['source'] = entry.source === 'command' || entry.source === 'wire' || entry.source === 'lifecycle'
-      ? entry.source
-      : undefined;
-    events.push({
-      atMs: Math.max(0, Math.floor(parsed.atMs)),
-      entry: {
-        ts: entry.ts,
-        tag: entry.tag as LogEntry['tag'],
-        level: entry.level as LogEntry['level'],
-        source,
-        message: entry.message,
-        groupId: typeof entry.groupId === 'string' ? entry.groupId : undefined,
-      },
-    });
-  }
-  return events.sort((a, b) => a.atMs - b.atMs);
-}
-
 export class SessionController {
   private readonly store = new LogStore();
   private readonly history = new CommandHistory();
@@ -138,7 +134,6 @@ export class SessionController {
   private outputFormat: OutputFormat = 'pretty';
   private eventFilters = new Set<EventFilter>(DEFAULT_EVENT_FILTERS);
   private connectionStatus: ConnectionStatus = 'idle';
-  private replayStatus = 'off';
   private commandLine = '';
   private connected = false;
   private error: string | undefined;
@@ -147,10 +142,6 @@ export class SessionController {
   private unsubscribeSocket: (() => void) | undefined;
   private logTagFilters: LogTag[] | undefined;
   private activeProfileName: string | undefined;
-  private recordFilePath: string | undefined;
-  private recordingStartedAtMs = 0;
-  private pendingReplayRecord: ReplayEvent[] = [];
-  private readonly replayEngine: ReplayEngine;
   private macros: Macro[] = [];
   private readonly macroEngine: MacroEngine;
   private macroRecordingBuffer: MacroStep[] | undefined;
@@ -175,6 +166,23 @@ export class SessionController {
   /** Reentrant counter: when > 0 the active call stack is running a user-issued command, so
    *  wire frames emitted during it attribute to `'command'`. */
   private commandSourceDepth = 0;
+  /** Monotonic counter for wire-frame group ids. Increments per RAW_RX push. */
+  private wireSeq = 0;
+  /** Stash of recent wire frames awaiting a typed-event partner.
+   *  Keyed by the monotonic `wireSeq` so two frames arriving in the same ms tick do not
+   *  overwrite each other (Map.set collisions silently drop the earlier stash). The wire-
+   *  frame ts is stored on the entry for age-based sweeping. Bounded by `WIRE_PENDING_MAX`
+   *  entries and `WIRE_PENDING_TTL_MS` age. */
+  private readonly wirePending = new Map<number, {
+    groupId: string;
+    payload: unknown;
+    message: string;
+    rendered: boolean;
+    /** Wire-frame ts (epoch ms) used by `sweepWirePending` to expire stale entries. */
+    ts: number;
+    /** Stringified `PAYLOAD` body, lazy-cached for structural pairing. */
+    payloadKey?: string;
+  }>();
   private liveStreamPaused = false;
   private readOnly = false;
   private unsubscribeReadOnly: (() => void) | undefined;
@@ -189,16 +197,6 @@ export class SessionController {
     this.isTriggersLicensed = deps.isTriggersLicensed ?? (() => isFeatureLicensed('triggers'));
     this.isAnnotationsLicensed = deps.isAnnotationsLicensed ?? (() => isFeatureLicensed('annotations'));
     this.isMultiwindowLicensed = deps.isMultiwindowLicensed ?? (() => isFeatureLicensed('multiwindow'));
-    this.replayEngine = new ReplayEngine(
-      (entry) => {
-        this.store.push({ ...entry, source: entry.source ?? 'lifecycle' });
-        this.emit();
-      },
-      () => {
-        this.replayStatus = 'done';
-        this.emit();
-      },
-    );
     this.macroEngine = new MacroEngine(
       async (line) => {
         this.submittingFromMacro = true;
@@ -245,7 +243,6 @@ export class SessionController {
     return {
       connected: this.connected,
       connectionStatus: this.connectionStatus,
-      replayStatus: this.replayStatus,
       outputFormat: this.outputFormat,
       eventFilters: Array.from(this.eventFilters),
       logEntries: this.store.all(),
@@ -560,28 +557,22 @@ export class SessionController {
         lares: ctxIo.lares,
         socketSend: ctxIo.socketSend,
         outputFormat: this.outputFormat,
-        eventFilters: this.eventFilters,
-        onEventFiltersChanged: (next) => { this.eventFilters = next; },
-        onFormatChanged: (fmt) => { this.outputFormat = fmt; },
-        rawFullEnabled: false,
-        onRawFullChanged: () => {},
-        onExport: async (path) => await this.exportSession(path),
         getStateSnapshot: (scope) => this.stateScopeSnapshot(scope),
-        onRecordCommand: async (args) => await this.handleRecordCommand(args),
-        onReplayCommand: async (args) => await this.handleReplayCommand(args),
       }));
+      const typedCommand = line.trim();
+      let firstPush = true;
       for (const item of items) {
-        if (item === '__EXIT__') {
-          this.disconnect();
-          continue;
-        }
+        const command = firstPush && typedCommand.length > 0 ? typedCommand : undefined;
         if (typeof item === 'string') {
-          this.pushCommandMessage(item, groupId);
+          this.pushCommandMessage(item, groupId, undefined, command);
         } else {
-          this.pushCommandMessage(item.text, groupId, item.payload);
+          this.pushCommandMessage(item.text, groupId, item.payload, command);
         }
+        firstPush = false;
       }
     } catch (error) {
+      const typedCommand = line.trim();
+      const command = typedCommand.length > 0 ? typedCommand : undefined;
       if (error instanceof ReadOnlyBlockedError) {
         this.store.push({
           level: 'warn',
@@ -589,6 +580,7 @@ export class SessionController {
           source: 'command',
           message: error.message,
           groupId,
+          command,
         });
       } else {
         this.store.push({
@@ -596,6 +588,8 @@ export class SessionController {
           tag: 'ERROR',
           source: 'command',
           message: error instanceof Error ? error.message : String(error),
+          groupId,
+          command,
         });
       }
     }
@@ -643,64 +637,19 @@ export class SessionController {
     return destination;
   }
 
-  private async handleRecordCommand(args: string[]): Promise<string[]> {
-    const [sub, maybePath] = args;
-    if (sub === 'start') {
-      this.recordFilePath = maybePath ?? await resolveDefaultSessionPath('replay', '.ndjson');
-      this.recordingStartedAtMs = Date.now();
-      this.pendingReplayRecord = [];
-      return [`Recording started: ${this.recordFilePath}`];
+  async exportLogs(path: string, savedMessage?: (path: string) => string): Promise<string> {
+    try {
+      const saved = await this.exportSession(path);
+      const text = savedMessage ? savedMessage(saved) : `Exported logs to ${saved}`;
+      this.pushSystemMessage(text);
+      this.emit();
+      return saved;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      this.store.push({ level: 'error', tag: 'ERROR', source: 'lifecycle', message: text });
+      this.emit();
+      throw error;
     }
-    if (sub === 'stop') {
-      if (!this.recordFilePath) throw new Error('Recording is not active.');
-      const content = this.pendingReplayRecord.map((event) => JSON.stringify(event)).join('\n');
-      await writeUtf8File(this.recordFilePath, `${content}\n`);
-      const out = this.recordFilePath;
-      this.recordFilePath = undefined;
-      this.pendingReplayRecord = [];
-      return [`Recording saved: ${out}`];
-    }
-    throw new Error('Usage: record start [path] | record stop');
-  }
-
-  private async handleReplayCommand(args: string[]): Promise<string[]> {
-    const [sub, value] = args;
-    if (sub === 'load') {
-      if (!value) throw new Error('Usage: replay load <path>');
-      const raw = await readUtf8File(value);
-      const events = parseReplayContent(raw);
-      this.replayEngine.load(events);
-      this.replayStatus = `loaded:${String(events.length)}`;
-      return [`Replay loaded: ${String(events.length)} events`];
-    }
-    if (sub === 'play') {
-      this.replayEngine.play();
-      this.replayStatus = `playing@${String(this.replayEngine.playbackSpeed)}x`;
-      return ['Replay started'];
-    }
-    if (sub === 'pause') {
-      this.replayEngine.pause();
-      this.replayStatus = 'paused';
-      return ['Replay paused'];
-    }
-    if (sub === 'step') {
-      this.replayEngine.step();
-      this.replayStatus = `paused:${String(this.replayEngine.position)}/${String(this.replayEngine.loadedEvents)}`;
-      return ['Replay stepped'];
-    }
-    if (sub === 'speed') {
-      const speed = Number(value);
-      if (!value || !Number.isFinite(speed) || speed <= 0) throw new Error('Usage: replay speed <n>');
-      this.replayEngine.setSpeed(speed);
-      this.replayStatus = `${this.replayEngine.status}@${String(this.replayEngine.playbackSpeed)}x`;
-      return [`Replay speed set to: ${String(speed)}x`];
-    }
-    if (sub === 'stop') {
-      this.replayEngine.stop();
-      this.replayStatus = 'off';
-      return ['Replay stopped'];
-    }
-    throw new Error('Usage: replay load <path> | replay play|pause|step|speed <n>|stop');
   }
 
   private stateScopeSnapshot(scope: string): unknown {
@@ -742,7 +691,6 @@ export class SessionController {
       this.emit();
       return;
     }
-    this.maybeRecordEvent(event);
     let pushed = false;
     if (event.type === 'error' && shouldPrint(this.eventFilters, 'errors')) {
       const isObj = typeof event.message !== 'string' && event.message !== undefined;
@@ -799,21 +747,45 @@ export class SessionController {
         && !Array.isArray(payload)
         && 'RESULT' in (payload as Record<string, unknown>);
       if (!isAckBody) {
-        this.store.push({ level: 'info', tag: 'CHANGE', source: 'lifecycle', message: text, payload });
+        const claim = this.consumePendingWire(payload);
+        this.store.push({
+          level: 'info', tag: 'CHANGE', source: 'lifecycle', message: text, payload,
+          groupId: claim?.groupId, wireFrame: claim?.wireFrame,
+        });
         pushed = true;
       }
     } else if (event.type === 'multi_types' && shouldPrint(this.eventFilters, 'multitypes')) {
       const { text, payload } = this.coerceEventMessage(event.message);
-      this.store.push({ level: 'info', tag: 'BULK', source: 'lifecycle', message: text, payload });
+      const claim = this.consumePendingWire(payload);
+      this.store.push({
+        level: 'info', tag: 'BULK', source: 'lifecycle', message: text, payload,
+        groupId: claim?.groupId, wireFrame: claim?.wireFrame,
+      });
       pushed = true;
     }
     if (pushed) this.runTriggersForLatest();
     this.emit();
   }
 
+  /** Heuristic: does this payload look like a panel response (vs. an unsolicited notification)?
+   *  Unsolicited frames such as STATUS_SYSTEMS must not be swallowed by the CMD-pair fallback
+   *  in `correlateAck`, otherwise their RAW_RX row is suppressed and the decoded CHANGE row
+   *  loses its wire-frame pairing. Real responses always carry one of these markers. */
+  private isAckShaped(obj: Record<string, unknown>): boolean {
+    if ('RESULT' in obj) return true;
+    const pt = typeof obj.PAYLOAD_TYPE === 'string' ? obj.PAYLOAD_TYPE : undefined;
+    if (pt?.endsWith('_ACK')) return true;
+    const cmd = typeof obj.CMD === 'string' ? obj.CMD : undefined;
+    if (cmd?.endsWith('_RES')) return true;
+    const inner = obj.PAYLOAD;
+    if (inner && typeof inner === 'object' && !Array.isArray(inner) && 'RESULT' in (inner as Record<string, unknown>)) return true;
+    return false;
+  }
+
   private correlateAck(payload: unknown, nowTs: number = Date.now()): { cmdId: string; latencyMs: number; source: LogSource } | undefined {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
     const obj = payload as Record<string, unknown>;
+    if (!this.isAckShaped(obj)) return undefined;
     const inner = obj.PAYLOAD && typeof obj.PAYLOAD === 'object' && !Array.isArray(obj.PAYLOAD)
       ? obj.PAYLOAD as Record<string, unknown>
       : undefined;
@@ -937,9 +909,13 @@ export class SessionController {
   }
 
   private recordReceived(frame: SocketFrame): void {
+    this.sweepWirePending(frame.ts);
     const { raw, ts } = frame;
     let payload: unknown;
     try { payload = JSON.parse(raw); } catch { /* keep raw text path */ }
+    const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
+    const seq = ++this.wireSeq;
+    const wireGroupId = `wire-${String(seq)}`;
     const correlation = this.correlateAck(payload, ts);
     if (correlation) {
       const ackResult = extractAckResult(payload);
@@ -954,19 +930,88 @@ export class SessionController {
         },
       });
       // Suppress the duplicate RAW_RX row: the suffix chip on the TX entry plus the
-      // AckSection in LogDetailPane already surface this frame in full.
+      // AckSection in LogDetailPane already surface this frame in full. Still publish the
+      // wire-metadata sidecar so any change/multi_types event lares4-ts emits synchronously
+      // from this response payload can attach its `wireFrame` and share a groupId.
+      this.stashWirePending(seq, { groupId: wireGroupId, payload, message: text, rendered: false, ts });
       this.emit();
       return;
     }
-    if (!shouldPrint(this.eventFilters, 'raw')) {
+    const rendered = shouldPrint(this.eventFilters, 'raw');
+    // Stash wire metadata unconditionally so a following CHANGE/BULK can claim the groupId.
+    // When raw filter is on the RAW_RX row carries the payload (log-view links via groupId);
+    // when off the sidecar payload is attached directly to the decoded entry's `wireFrame`.
+    this.stashWirePending(seq, { groupId: wireGroupId, payload, message: text, rendered, ts });
+    if (!rendered) {
       this.emit();
       return;
     }
-    const text = payload !== undefined ? formatOutput(payload, this.outputFormat) : raw;
     const source: LogSource = 'wire';
-    this.store.push({ level: 'debug', tag: 'RAW_RX', source, message: text, payload });
+    this.store.push({ level: 'debug', tag: 'RAW_RX', source, message: text, payload, groupId: wireGroupId });
     this.runTriggersForLatest();
     this.emit();
+  }
+
+  private stashWirePending(
+    seq: number,
+    entry: { groupId: string; payload: unknown; message: string; rendered: boolean; ts: number },
+  ): void {
+    this.wirePending.set(seq, entry);
+    if (this.wirePending.size > WIRE_PENDING_MAX) {
+      const oldestKey = this.wirePending.keys().next().value;
+      if (oldestKey !== undefined) this.wirePending.delete(oldestKey);
+    }
+  }
+
+  /** Drop stashes whose wire ts is older than `nowTs - WIRE_PENDING_TTL_MS`. Keeps the map
+   *  bounded across long-lived sessions without depending on a next-frame heuristic. */
+  private sweepWirePending(nowTs: number): void {
+    if (this.wirePending.size === 0) return;
+    const cutoff = nowTs - WIRE_PENDING_TTL_MS;
+    for (const [key, entry] of this.wirePending) {
+      if (entry.ts < cutoff) this.wirePending.delete(key);
+      else break; // Map preserves insertion order; wireSeq is monotonic.
+    }
+  }
+
+  /** Locate the wire-frame stash that paired with a given typed event.
+   *  Prefer a structural match on the decoded payload body; fall back to the most-recent
+   *  stash within `WIRE_PENDING_TTL_MS` (recency is sufficient because typed events from
+   *  lares4-ts are dispatched in the order their wire frames arrived).
+   *
+   *  Non-destructive: leaves the stash in place so a burst of typed events emitted
+   *  synchronously from the same wire frame can all share the groupId. Aging via
+   *  `sweepWirePending` and the `WIRE_PENDING_MAX` bound prevent unbounded growth. */
+  private consumePendingWire(
+    eventPayload?: unknown,
+  ): { groupId: string; wireFrame?: LogEntry['wireFrame']; ts: number } | undefined {
+    if (this.wirePending.size === 0) return undefined;
+    const eventKey = eventPayload !== undefined ? stableStringify(eventPayload) : undefined;
+    let matchedKey: number | undefined;
+    if (eventKey !== undefined) {
+      // Walk newest → oldest so the most recent structural twin wins.
+      const keys = Array.from(this.wirePending.keys());
+      for (let i = keys.length - 1; i >= 0; i -= 1) {
+        const key = keys[i]!;
+        const entry = this.wirePending.get(key)!;
+        const wirePayloadBody = extractWirePayloadBody(entry.payload);
+        if (wirePayloadBody === undefined) continue;
+        const wireKey = entry.payloadKey ?? stableStringify(wirePayloadBody);
+        entry.payloadKey = wireKey;
+        if (wireKey === eventKey) { matchedKey = key; break; }
+      }
+    }
+    if (matchedKey === undefined) {
+      // Fall back to the most-recent stash (latest insertion order in a Map).
+      const keys = Array.from(this.wirePending.keys());
+      matchedKey = keys[keys.length - 1];
+    }
+    if (matchedKey === undefined) return undefined;
+    const stash = this.wirePending.get(matchedKey)!;
+    const wireFrame = !stash.rendered
+      ? { payload: stash.payload, content: stash.message, ts: new Date(stash.ts).toISOString() }
+      : undefined;
+    return { groupId: stash.groupId, wireFrame, ts: stash.ts };
   }
 
   private sweepPendingTx(): void {
@@ -987,33 +1032,7 @@ export class SessionController {
     }
   }
 
-  private maybeRecordEvent(event: SocketEventEmitted): void {
-    if (!this.recordFilePath) return;
-    if (event.type === 'open' || event.type === 'close') return;
-    const tag = event.type === 'error'
-      ? 'ERROR'
-      : event.type === 'response'
-        ? 'ACK'
-        : event.type === 'change'
-          ? 'CHANGE'
-          : event.type === 'multi_types'
-            ? 'BULK'
-            : 'RAW_RX';
-    const level = event.type === 'error' ? 'error' : event.type === 'raw' ? 'debug' : 'info';
-    const source: LogSource = event.type === 'raw' ? 'wire' : 'lifecycle';
-    this.pendingReplayRecord.push({
-      atMs: Math.max(0, Date.now() - this.recordingStartedAtMs),
-      entry: {
-        ts: nowIso(),
-        level,
-        tag,
-        source,
-        message: typeof event.message === 'string' ? event.message : safeJson(event.message),
-      },
-    });
-  }
-
-  private pushCommandMessage(text: string, groupId?: string, payload?: unknown): void {
+  private pushCommandMessage(text: string, groupId?: string, payload?: unknown, command?: string): void {
     this.store.push({
       level: 'info',
       tag: 'LOG',
@@ -1021,6 +1040,7 @@ export class SessionController {
       message: text.length > 0 ? text : ' ',
       groupId,
       payload,
+      command,
     });
   }
 

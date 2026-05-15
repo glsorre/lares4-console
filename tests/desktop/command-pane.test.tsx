@@ -55,37 +55,37 @@ afterEach(() => {
 describe('CommandPane autocomplete', () => {
   it('fills the input when a suggestion row is clicked', async () => {
     const user = userEvent.setup();
-    render(<Harness initial="fo" />);
+    render(<Harness initial="st" />);
 
     const input = screen.getByLabelText('Command input') as HTMLInputElement;
     input.focus();
 
-    const option = await screen.findByRole('option', { name: /format/ });
+    const option = await screen.findByRole('option', { name: /state/ });
     await user.click(option);
 
-    assert.equal(input.value, 'format ');
+    assert.equal(input.value, 'state ');
     const harness = screen.getByTestId('harness');
-    assert.equal(harness.getAttribute('data-value'), 'format ');
+    assert.equal(harness.getAttribute('data-value'), 'state ');
   });
 
   it('completes via Tab as a regression guard', async () => {
     const user = userEvent.setup();
-    render(<Harness initial="fo" />);
+    render(<Harness initial="st" />);
 
     const input = screen.getByLabelText('Command input') as HTMLInputElement;
     input.focus();
     await user.keyboard('{Tab}');
 
-    assert.equal(input.value, 'format ');
+    assert.equal(input.value, 'state ');
   });
 
   it('does not reopen suggestions after Enter clears the command', async () => {
     const user = userEvent.setup();
-    render(<ClearOnSubmitHarness initial="fo" />);
+    render(<ClearOnSubmitHarness initial="st" />);
 
     const input = screen.getByLabelText('Command input') as HTMLInputElement;
     input.focus();
-    await screen.findByRole('option', { name: /format/ });
+    await screen.findByRole('option', { name: /state/ });
 
     await user.keyboard('{Enter}');
 
@@ -96,11 +96,11 @@ describe('CommandPane autocomplete', () => {
 
   it('does not reopen suggestions after clicking Run', async () => {
     const user = userEvent.setup();
-    render(<ClearOnSubmitHarness initial="fo" />);
+    render(<ClearOnSubmitHarness initial="st" />);
 
     const input = screen.getByLabelText('Command input') as HTMLInputElement;
     input.focus();
-    await screen.findByRole('option', { name: /format/ });
+    await screen.findByRole('option', { name: /state/ });
 
     const runButton = screen.getByRole('button', { name: 'Run' });
     await user.click(runButton);
@@ -112,11 +112,11 @@ describe('CommandPane autocomplete', () => {
 
   it('reopens suggestions after typing again post-submit', async () => {
     const user = userEvent.setup();
-    render(<ClearOnSubmitHarness initial="fo" />);
+    render(<ClearOnSubmitHarness initial="st" />);
 
     const input = screen.getByLabelText('Command input') as HTMLInputElement;
     input.focus();
-    await screen.findByRole('option', { name: /format/ });
+    await screen.findByRole('option', { name: /state/ });
     await user.keyboard('{Enter}');
     assert.equal(screen.queryByRole('option'), null);
 

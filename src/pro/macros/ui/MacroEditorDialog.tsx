@@ -2,6 +2,7 @@
 // See LICENSE in src/pro/macros.
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import {
   Dialog,
@@ -36,6 +37,7 @@ function textToSteps(text: string, originalSteps?: MacroStep[]): MacroStep[] {
 }
 
 export function MacroEditorDialog({ open, initial, onOpenChange, onSave }: MacroEditorDialogProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [text, setText] = useState('');
@@ -78,53 +80,53 @@ export function MacroEditorDialog({ open, initial, onOpenChange, onSave }: Macro
     <Dialog open={open} onOpenChange={(next) => { if (!saving) onOpenChange(next); }}>
       <DialogContent showCloseButton={!saving}>
         <DialogHeader>
-          <DialogTitle>{initial ? 'Edit macro' : 'New macro'}</DialogTitle>
+          <DialogTitle>{initial ? t('pro.macros.editor.titleEdit') : t('pro.macros.editor.titleNew')}</DialogTitle>
           <DialogDescription>
-            One command per line. Empty lines are ignored.
+            {t('pro.macros.editor.desc')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label htmlFor="macro-name" className="text-xs text-muted-foreground">Name</Label>
+            <Label htmlFor="macro-name" className="text-xs text-muted-foreground">{t('pro.macros.editor.nameLabel')}</Label>
             <Input
               id="macro-name"
               className="h-8 text-xs"
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="morning"
+              placeholder={t('pro.macros.editor.namePlaceholder')}
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="macro-desc" className="text-xs text-muted-foreground">Description (optional)</Label>
+            <Label htmlFor="macro-desc" className="text-xs text-muted-foreground">{t('pro.macros.editor.descLabel')}</Label>
             <Input
               id="macro-desc"
               className="h-8 text-xs"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="turn on lights, open covers"
+              placeholder={t('pro.macros.editor.descPlaceholder')}
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="macro-steps" className="text-xs text-muted-foreground">Commands</Label>
+            <Label htmlFor="macro-steps" className="text-xs text-muted-foreground">{t('pro.macros.editor.commandsLabel')}</Label>
             <textarea
               id="macro-steps"
               className="border-border/70 bg-background min-h-[140px] w-full rounded-md border px-2 py-1.5 font-mono text-xs shadow-inner focus:outline-none focus:ring-2 focus:ring-ring"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={'lights on 1\nlights on 2\ncovers up 1'}
+              placeholder={t('pro.macros.editor.commandsPlaceholder')}
               spellCheck={false}
             />
-            <p className="text-muted-foreground text-[0.65rem]">{steps.length} step{steps.length === 1 ? '' : 's'}</p>
+            <p className="text-muted-foreground text-[0.65rem]">{t('pro.macros.steps', { count: steps.length })}</p>
           </div>
           {error && <p className="text-destructive text-xs">{error}</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('pro.macros.editor.cancel')}
           </Button>
           <Button type="button" disabled={!canSave} onClick={() => void handleSave()}>
-            {saving ? <><Loader2 className="size-4 animate-spin" aria-hidden />Saving</> : 'Save'}
+            {saving ? <><Loader2 className="size-4 animate-spin" aria-hidden />{t('pro.macros.editor.saving')}</> : t('pro.macros.editor.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

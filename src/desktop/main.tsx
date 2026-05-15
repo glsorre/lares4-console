@@ -5,6 +5,7 @@ import { AppShell } from './AppShell.js';
 import { TabsProvider } from '@pro/tabs/context.js';
 import { WindowsProvider } from '@pro/windows/context.js';
 import { bootstrapLicenses } from './runtime/commercial-license-prefs.js';
+import { initI18n } from '../i18n/index.js';
 import './styles.css';
 
 function render(): void {
@@ -24,4 +25,7 @@ function render(): void {
 // Verify any stored license tokens before first render so feature gates are
 // in their correct state. Failures (no key, malformed, expired) silently
 // resolve — the gates simply stay locked.
-void bootstrapLicenses().catch(() => undefined).finally(render);
+void Promise.all([
+  bootstrapLicenses().catch(() => undefined),
+  initI18n().catch(() => undefined),
+]).finally(render);

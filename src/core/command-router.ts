@@ -1,8 +1,8 @@
-import type { EventFilter, OutputFormat } from './types.js';
+import type { OutputFormat } from './types.js';
 import { parseCommandTokens, parseNumber } from './parsers.js';
 import { formatOutput, safeJson } from './utils.js';
 import { canonicalStateScope } from './state-scope.js';
-import { COMMAND_HELP_LINES, EVENT_FILTERS, ROOT_COMMANDS, STATE_SCOPES } from './command-spec.js';
+import { COMMAND_HELP_LINES, ROOT_COMMANDS, STATE_SCOPES } from './command-spec.js';
 
 function editDistance(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
@@ -74,15 +74,7 @@ export interface CommandContext {
   };
   socketSend: (cmd: string, payloadType: string, payload: Record<string, unknown>) => void;
   outputFormat: OutputFormat;
-  eventFilters: Set<EventFilter>;
-  onEventFiltersChanged: (next: Set<EventFilter>) => void;
-  onFormatChanged: (fmt: OutputFormat) => void;
-  rawFullEnabled: boolean;
-  onRawFullChanged: (enabled: boolean) => void;
-  onExport: (path?: string) => Promise<string>;
   getStateSnapshot: (scope: string) => unknown;
-  onRecordCommand?: (args: string[]) => Promise<string[]>;
-  onReplayCommand?: (args: string[]) => Promise<string[]>;
 }
 
 type BivariantHandler<T extends unknown[]> = {
@@ -116,41 +108,6 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
   }
   if (head === 'help') {
     return [...COMMAND_HELP_LINES];
-  }
-  if (head === 'format') {
-    if (!sub) {
-      return [`Output format: ${ctx.outputFormat}`];
-    }
-    if (sub !== 'pretty' && sub !== 'json') {
-      unsupported('format', 'format pretty|json');
-    }
-    ctx.onFormatChanged(sub);
-    return [`Output format set to: ${sub}`];
-  }
-  if (head === 'events') {
-    if (!sub) {
-      unsupported('events', `events none|all|${EVENT_FILTERS.join(',')}`);
-    }
-    const parsed = sub.split(',').map((v) => v.trim()).filter(Boolean);
-    const invalid = parsed.filter((v) => !EVENT_FILTERS.includes(v as (typeof EVENT_FILTERS)[number]));
-    if (sub !== 'all' && sub !== 'none' && invalid.length > 0) {
-      unsupported('events', `events none|all|${EVENT_FILTERS.join(',')}`);
-    }
-    const next = sub === 'all'
-      ? new Set<EventFilter>(['all'])
-      : sub === 'none'
-        ? new Set<EventFilter>(['none'])
-        : new Set(parsed as EventFilter[]);
-    ctx.onEventFiltersChanged(next);
-    return [`Event filters set to: ${Array.from(next).join(',')}`];
-  }
-  if (head === 'raw' && sub === 'full') {
-    if (third !== 'on' && third !== 'off') {
-      unsupported('raw', 'raw full on|off');
-    }
-    const enabled = third === 'on';
-    ctx.onRawFullChanged(enabled);
-    return [`Raw full mode set to: ${enabled ? 'on' : 'off'}`];
   }
   if (head === 'raw' && sub === 'send') {
     const matched = trimmedLine.match(/^raw\s+send\s+(\S+)\s+(\S+)\s+([\s\S]+)$/);
@@ -342,23 +299,7 @@ export async function executeCommand(line: string, ctx: CommandContext): Promise
     return [`ok scenario trigger id=${id}`];
   }
   if (head === 'raw') {
-    unsupported('raw', 'raw send <CMD> <PAYLOAD_TYPE> <JSON_PAYLOAD> | raw sendcmd <JSON_COMMAND> | raw full on|off');
-  }
-  if (head === 'export') {
-    const path = args[1];
-    const output = await ctx.onExport(path);
-    return [`Session exported to: ${output}`];
-  }
-  if (head === 'record') {
-    if (!ctx.onRecordCommand) throw new Error('Record commands are unavailable in this runtime.');
-    return await ctx.onRecordCommand(args.slice(1));
-  }
-  if (head === 'replay') {
-    if (!ctx.onReplayCommand) throw new Error('Replay commands are unavailable in this runtime.');
-    return await ctx.onReplayCommand(args.slice(1));
-  }
-  if (head === 'exit' || head === 'quit') {
-    return ['__EXIT__'];
+    unsupported('raw', 'raw send <CMD> <PAYLOAD_TYPE> <JSON_PAYLOAD> | raw sendcmd <JSON_COMMAND>');
   }
   unsupported(head, 'help');
 }

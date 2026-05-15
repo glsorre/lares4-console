@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { EventFilter } from '../src/core/types.js';
 import { executeCommand, type CommandOutputItem } from '../src/core/command-router.js';
 
 function textOf(item: CommandOutputItem | undefined): string {
@@ -26,12 +25,6 @@ describe('command router additional coverage', () => {
       void payload;
     },
     outputFormat: 'pretty' as const,
-    eventFilters: new Set<EventFilter>(['all']),
-    onEventFiltersChanged: (next: Set<EventFilter>) => { void next; },
-    onFormatChanged: (fmt: string) => { void fmt; },
-    rawFullEnabled: false,
-    onRawFullChanged: (enabled: boolean) => { void enabled; },
-    onExport: async (path?: string) => path ?? 'x.log',
     getStateSnapshot: (scope: string) => {
       void scope;
       return { ok: true };
@@ -81,32 +74,11 @@ describe('command router additional coverage', () => {
     assert.deepEqual(calls, ['switchOn:11', 'rollTo:3:90', 'scenario:7']);
   });
 
-  it('supports format and export commands', async () => {
-    const formatLines = await executeCommand('format json', baseCtx);
-    assert.equal(textOf(formatLines[0]), 'Output format set to: json');
-
-    const exportLines = await executeCommand('export custom.log', baseCtx);
-    assert.equal(textOf(exportLines[0]), 'Session exported to: custom.log');
-  });
-
   it('returns command help lines', async () => {
     const lines = await executeCommand('help', baseCtx);
     assert.ok(lines.length > 6);
     assert.equal(textOf(lines[0]), 'Commands:');
     assert.ok(lines.some((line) => textOf(line).includes('raw send')));
-  });
-
-  it('routes record/replay commands to runtime handlers', async () => {
-    const record = await executeCommand('record start out.ndjson', {
-      ...baseCtx,
-      onRecordCommand: async (args) => [`record:${args.join(',')}`],
-    });
-    const replay = await executeCommand('replay play', {
-      ...baseCtx,
-      onReplayCommand: async (args) => [`replay:${args.join(',')}`],
-    });
-    assert.equal(textOf(record[0]), 'record:start,out.ndjson');
-    assert.equal(textOf(replay[0]), 'replay:play');
   });
 
   it('supports new entity command families', async () => {

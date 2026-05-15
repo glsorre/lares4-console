@@ -76,6 +76,18 @@ describe('SessionController', () => {
     assert.ok(cmds.some((e) => e.message.includes('Commands:')));
   });
 
+  it('submit records the typed command on the first entry of the group', async () => {
+    const { lares, socket } = stubLaresAndSocket();
+    const c = new SessionController({
+      createClient: async () => ({ lares: lares as never, socket }),
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    await c.submit('help');
+    const cmds = c.snapshot().logEntries.filter((e) => e.tag === 'LOG');
+    assert.equal(cmds[0]?.command, 'help');
+    assert.ok(cmds.slice(1).every((e) => e.command === undefined), 'only first entry carries the typed command');
+  });
+
   it('submit bundles command output under one groupId', async () => {
     const { lares, socket } = stubLaresAndSocket();
     const c = new SessionController({
@@ -183,28 +195,6 @@ describe('SessionController', () => {
     assert.ok(taggedTx[0]?.ack, 'expected ack metadata patched onto TX entries');
     assert.equal(taggedTx[0]?.ack?.result, 'OK');
     assert.equal(taggedTx[0]?.ack?.latencyMs, taggedTx[0]?.latencyMs);
-  });
-
-  it('correlates ACK even when sent and acks filters are disabled', async () => {
-    const { lares, socket, subs } = stubLaresAndSocket();
-    let captured: ((raw: string) => void) | undefined;
-    const c = new SessionController({
-      createClient: async (_env, options) => {
-        captured = adaptSend(options?.onSocketSend);
-        return { lares: lares as never, socket };
-      },
-    });
-    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
-    // Disable both sent and acks rendering; correlation must still work.
-    await c.submit('events errors');
-    captured?.('{"CMD":"LIGHTS","ID":"99","PAYLOAD":{"STA":"ON"}}');
-    assert.equal(c.snapshot().pendingTxCount, 1);
-    subs[0]({ type: 'response', message: '{"ID":"99","PAYLOAD":{"RESULT":"OK"}}' });
-    const snap = c.snapshot();
-    assert.equal(snap.pendingTxCount, 0);
-    // No RAW_TX or ACK rendered (filter excluded both), but pending is cleared.
-    assert.equal(snap.logEntries.filter((e) => e.tag === 'RAW_TX').length, 0);
-    assert.equal(snap.logEntries.filter((e) => e.tag === 'ACK').length, 0);
   });
 
   it('clears pending on WS receive when no response is emitted (READ_RES path) and suppresses paired RAW_RX', async () => {
@@ -742,5 +732,222 @@ describe('SessionController', () => {
     assert.ok(tx.length >= 1);
     assert.ok(tx.every((e) => e.source === 'wire'),
       'unattributed RAW_TX falls to wire');
+  });
+
+  it('pairs RAW_RX with its decoded CHANGE via a shared wire groupId', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // Default filter is 'all' — both 'raw' and 'changes' branches print.
+    capturedReceive?.('{"REALTIME":{"CHANGES":[{"ID":"1"}]}}');
+    subs[0]?.({ type: 'change', message: { 'lares4 console': { LIGHTS: [{ ID: '1', STA: 'ON' }] } } });
+
+    const entries = c.snapshot().logEntries;
+    const rx = entries.find((e) => e.tag === 'RAW_RX');
+    const change = entries.find((e) => e.tag === 'CHANGE');
+    assert.ok(rx, 'RAW_RX entry must exist');
+    assert.ok(change, 'CHANGE entry must exist');
+    assert.ok(rx?.groupId, 'RAW_RX must carry a groupId');
+    assert.equal(change?.groupId, rx?.groupId, 'CHANGE groupId must match RAW_RX');
+    assert.ok(rx?.groupId?.startsWith('wire-'), `groupId expected wire-* shape, got ${String(rx?.groupId)}`);
+  });
+
+  it('pairs RAW_RX with its decoded BULK via a shared wire groupId', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    capturedReceive?.('{"CMD":"READ_RES","PAYLOAD_TYPE":"MULTI_TYPES","PAYLOAD":{"LIGHTS":[],"COVERS":[]}}');
+    subs[0]?.({ type: 'multi_types', message: { LIGHTS: [{ ID: '1' }], COVERS: [{ ID: '2' }] } });
+
+    const entries = c.snapshot().logEntries;
+    const rx = entries.find((e) => e.tag === 'RAW_RX');
+    const bulk = entries.find((e) => e.tag === 'BULK');
+    assert.ok(rx);
+    assert.ok(bulk);
+    assert.equal(bulk?.groupId, rx?.groupId);
+  });
+
+  it('does not falsely correlate unsolicited frames whose CMD happens to match a pending TX', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // In-flight TX with CMD READ.
+    captured?.('{"CMD":"READ","ID":"7","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{}}');
+    assert.equal(c.snapshot().pendingTxCount, 1);
+    // Unsolicited panel push with matching CMD (READ) but no RESULT / _RES / _ACK marker.
+    capturedReceive?.('{"CMD":"READ","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{"NAME":"foo"}}');
+    subs[0]?.({ type: 'change', message: { 'lares4 console': { LIGHTS: [{ ID: '1' }] } } });
+
+    const snap = c.snapshot();
+    assert.equal(snap.pendingTxCount, 1, 'unsolicited frame must not consume the pending TX');
+    const rx = snap.logEntries.filter((e) => e.tag === 'RAW_RX');
+    assert.equal(rx.length, 1, 'unsolicited frame still prints a RAW_RX row');
+    const change = snap.logEntries.find((e) => e.tag === 'CHANGE');
+    assert.ok(change);
+    assert.equal(change?.groupId, rx[0]?.groupId, 'CHANGE is linked to the unsolicited RAW_RX twin');
+    const tx = snap.logEntries.find((e) => e.tag === 'RAW_TX' && e.correlationId === '7');
+    assert.equal(tx?.ack, undefined, 'pending TX must not be patched with a bogus ACK');
+  });
+
+  it('attaches wireFrame from an ack-correlated response to the synthetic CHANGE it emits', async () => {
+    // lares4-ts publishes a synthetic `change` event from inside `handleReadResponse` when
+    // the ACK's PAYLOAD_TYPE starts with STATUS_*. The CHANGE must claim that ACK frame's
+    // wire metadata; otherwise it renders as an orphan row (no RAW_RX twin, no detail-pane
+    // wire frame). See plans/why-this-image-1-vectorized-rabbit.md.
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let captured: ((raw: string) => void) | undefined;
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        captured = adaptSend(options?.onSocketSend);
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    captured?.('{"CMD":"READ","ID":"7","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{}}');
+    const ackRaw = '{"CMD":"READ_RES","ID":"7","PAYLOAD_TYPE":"STATUS_SYSTEM","PAYLOAD":{"RESULT":"OK","STATUS_SYSTEM":[{"ID":"1","ARM":{"D":"Totale"}}]}}';
+    capturedReceive?.(ackRaw);
+    subs[0]?.({ type: 'change', message: { 'lares4 console': { STATUS_SYSTEM: [{ ID: '1', ARM: { D: 'Totale' } }] } } });
+
+    const snap = c.snapshot();
+    // Suppression of the RAW_RX duplicate stays in place.
+    assert.equal(snap.logEntries.filter((e) => e.tag === 'RAW_RX').length, 0);
+    // TX still carries its ACK chip.
+    const tx = snap.logEntries.find((e) => e.tag === 'RAW_TX' && e.correlationId === '7');
+    assert.ok(tx);
+    assert.equal(tx?.ack?.result, 'OK');
+    // The synthetic CHANGE now claims the ack frame's wire metadata.
+    const change = snap.logEntries.find((e) => e.tag === 'CHANGE');
+    assert.ok(change, 'CHANGE entry must exist');
+    assert.ok(change?.groupId?.startsWith('wire-'), `CHANGE must claim the wire stash, got groupId=${String(change?.groupId)}`);
+    assert.ok(change?.wireFrame, 'CHANGE must carry wireFrame metadata for the detail pane');
+    assert.equal(
+      (change?.wireFrame?.payload as { CMD?: string } | undefined)?.CMD,
+      'READ_RES',
+      'wireFrame payload matches the ACK frame',
+    );
+  });
+
+  it('shares one wire groupId across a burst of CHANGE events from one frame', async () => {
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+    // Single uncorrelated frame → RAW_RX pushed (raw filter on by default).
+    capturedReceive?.('{"REALTIME":{"PAYLOAD":{"LIGHTS":[{"ID":"1"}],"COVERS":[{"ID":"2"}]}}}');
+    // lares4-ts emits two change events synchronously from the same realtime payload.
+    subs[0]?.({ type: 'change', message: { 'lares4 console': { LIGHTS: [{ ID: '1' }] } } });
+    subs[0]?.({ type: 'change', message: { 'lares4 console': { COVERS: [{ ID: '2' }] } } });
+
+    const entries = c.snapshot().logEntries;
+    const rx = entries.find((e) => e.tag === 'RAW_RX');
+    const changes = entries.filter((e) => e.tag === 'CHANGE');
+    assert.ok(rx);
+    assert.equal(changes.length, 2, 'both CHANGE events recorded');
+    assert.equal(changes[0]?.groupId, rx?.groupId, 'first CHANGE shares the wire groupId');
+    assert.equal(changes[1]?.groupId, rx?.groupId, 'second CHANGE also shares the wire groupId');
+  });
+
+  it('pairs each heartbeat REALTIME frame with its own decoded CHANGE (no cross-talk)', async () => {
+    // Reproduces the user-visible bug: when the panel pushes back-to-back STATUS_SYSTEM
+    // REALTIME heartbeats, every (RAW_RX, CHANGE) pair must merge into a single row in
+    // the log list. Cross-frame leakage would link CHANGE[N] to RAW_RX[N-1] and surface
+    // both as separate rows.
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+
+    capturedReceive?.('{"CMD":"REALTIME","PAYLOAD_TYPE":"CHANGES","PAYLOAD":{"STATUS_SYSTEM":[{"ID":"1","TEMP":{"IN":"+22.2"}}]}}');
+    subs[0]?.({ type: 'change', message: { STATUS_SYSTEM: [{ ID: '1', TEMP: { IN: '+22.2' } }] } });
+
+    capturedReceive?.('{"CMD":"REALTIME","PAYLOAD_TYPE":"CHANGES","PAYLOAD":{"STATUS_SYSTEM":[{"ID":"1","TEMP":{"IN":"+22.3"}}]}}');
+    subs[0]?.({ type: 'change', message: { STATUS_SYSTEM: [{ ID: '1', TEMP: { IN: '+22.3' } }] } });
+
+    const entries = c.snapshot().logEntries;
+    const rx = entries.filter((e) => e.tag === 'RAW_RX');
+    const changes = entries.filter((e) => e.tag === 'CHANGE');
+    assert.equal(rx.length, 2, 'two RAW_RX rows for two heartbeats');
+    assert.equal(changes.length, 2, 'two CHANGE rows for two heartbeats');
+    assert.equal(changes[0]?.groupId, rx[0]?.groupId, 'first CHANGE pairs with first RAW_RX');
+    assert.equal(changes[1]?.groupId, rx[1]?.groupId, 'second CHANGE pairs with second RAW_RX');
+    assert.notEqual(rx[0]?.groupId, rx[1]?.groupId, 'each heartbeat has its own groupId');
+  });
+
+  it('pairs by payload structure when typed events arrive out of order', async () => {
+    // Defends against the timing failure mode where a later wire frame's recordReceived
+    // runs before the earlier frame's typed change event reaches us. Pure-recency pairing
+    // would mislink them; structural payload match keeps each typed event with its
+    // originating wire frame.
+    const { lares, socket, subs } = stubLaresAndSocket();
+    let capturedReceive: ((raw: string) => void) | undefined;
+    const c = new SessionController({
+      createClient: async (_env, options) => {
+        capturedReceive = adaptReceive(options?.onSocketReceive);
+        return { lares: lares as never, socket };
+      },
+    });
+    await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
+
+    // Two wire frames land first, THEN their typed events fire (reversed order on purpose).
+    capturedReceive?.('{"CMD":"REALTIME","PAYLOAD_TYPE":"CHANGES","PAYLOAD":{"LIGHTS":[{"ID":"1","STA":"ON"}]}}');
+    capturedReceive?.('{"CMD":"REALTIME","PAYLOAD_TYPE":"CHANGES","PAYLOAD":{"COVERS":[{"ID":"2","POS":"50"}]}}');
+    // Out-of-order typed events — second wire's body decodes first, first wire's body decodes second.
+    subs[0]?.({ type: 'change', message: { COVERS: [{ ID: '2', POS: '50' }] } });
+    subs[0]?.({ type: 'change', message: { LIGHTS: [{ ID: '1', STA: 'ON' }] } });
+
+    const entries = c.snapshot().logEntries;
+    const rx = entries.filter((e) => e.tag === 'RAW_RX');
+    const changes = entries.filter((e) => e.tag === 'CHANGE');
+    assert.equal(rx.length, 2);
+    assert.equal(changes.length, 2);
+    // The CHANGE about COVERS shares the groupId of the COVERS wire frame, not LIGHTS.
+    const coversChange = changes.find((c) => Array.isArray((c.payload as { COVERS?: unknown }).COVERS));
+    const lightsChange = changes.find((c) => Array.isArray((c.payload as { LIGHTS?: unknown }).LIGHTS));
+    const coversRx = rx.find((r) => {
+      const inner = (r.payload as { PAYLOAD?: { COVERS?: unknown } }).PAYLOAD;
+      return inner !== undefined && Array.isArray(inner.COVERS);
+    });
+    const lightsRx = rx.find((r) => {
+      const inner = (r.payload as { PAYLOAD?: { LIGHTS?: unknown } }).PAYLOAD;
+      return inner !== undefined && Array.isArray(inner.LIGHTS);
+    });
+    assert.ok(coversChange);
+    assert.ok(lightsChange);
+    assert.ok(coversRx);
+    assert.ok(lightsRx);
+    assert.equal(coversChange?.groupId, coversRx?.groupId, 'COVERS CHANGE pairs with COVERS RAW_RX');
+    assert.equal(lightsChange?.groupId, lightsRx?.groupId, 'LIGHTS CHANGE pairs with LIGHTS RAW_RX');
   });
 });

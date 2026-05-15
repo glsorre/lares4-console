@@ -1,8 +1,11 @@
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
+import { initI18nSync } from '../../src/i18n/index.js';
 
 if (!('window' in globalThis) || globalThis.window === undefined) {
   GlobalRegistrator.register();
 }
+
+initI18nSync('en');
 
 if (!('ResizeObserver' in globalThis)) {
   class ResizeObserverStub {

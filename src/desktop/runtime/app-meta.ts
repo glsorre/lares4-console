@@ -13,9 +13,6 @@ export const APP_VERSION = __APP_VERSION__;
 export const APP_REPO = normalizeRepo(__APP_REPO__);
 export const APP_AUTHOR = __APP_AUTHOR__;
 
-export const APP_DISPLAY_NAME = 'Lares4 Console';
-export const APP_TAGLINE = 'Desktop debug console for Lares4 panels';
-
 export interface LicenseSummaryEntry {
   readonly path: string;
   readonly license: string;
@@ -37,9 +34,9 @@ export interface LicenseDocLink {
 }
 
 export const LICENSE_DOC_LINKS: readonly LicenseDocLink[] = [
-  { label: 'LICENSE (ISC)', path: 'LICENSE' },
   { label: 'LICENSE-NOTICE.md', path: 'LICENSE-NOTICE.md' },
-  { label: 'PolyForm Noncommercial 1.0.0 (src/pro/macros)', path: 'src/pro/macros/LICENSE' },
+  { label: 'LICENSE (ISC)', path: 'LICENSE' },
+  { label: 'PolyForm Noncommercial 1.0.0', path: 'src/pro/macros/LICENSE' },
 ];
 
 export function repoFileUrl(relativePath: string): string {

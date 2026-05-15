@@ -83,28 +83,31 @@ export async function verifyLicense(
   return result;
 }
 
-/** Human-readable error message for a verify failure reason. */
-export function verifyFailureMessage(reason: VerifyFailureReason): string {
+/** Translation key + params for a verify failure reason. Render with i18next `t(key, params)`. */
+export function verifyFailureMessage(reason: VerifyFailureReason): {
+  key: string;
+  params?: Record<string, string | number>;
+} {
   switch (reason) {
     case 'malformed-prefix':
-      return `License token must start with "${TOKEN_PREFIX}".`;
+      return { key: 'license.verify.malformedPrefix', params: { prefix: TOKEN_PREFIX } };
     case 'malformed-structure':
-      return 'License token is malformed.';
+      return { key: 'license.verify.malformedStructure' };
     case 'malformed-base64':
-      return 'License token contains invalid base64.';
+      return { key: 'license.verify.malformedBase64' };
     case 'malformed-payload':
-      return 'License payload is not valid JSON.';
+      return { key: 'license.verify.malformedPayload' };
     case 'unsupported-version':
-      return `Unsupported license version. This build expects v${PAYLOAD_VERSION}.`;
+      return { key: 'license.verify.unsupportedVersion', params: { version: PAYLOAD_VERSION } };
     case 'feature-mismatch':
-      return 'License is valid but issued for a different feature.';
+      return { key: 'license.verify.featureMismatch' };
     case 'expired':
-      return 'License has expired.';
+      return { key: 'license.verify.expired' };
     case 'bad-signature':
-      return 'License signature is invalid.';
+      return { key: 'license.verify.badSignature' };
     case 'pubkey-unconfigured':
-      return 'This build has no verification key configured.';
+      return { key: 'license.verify.pubkeyUnconfigured' };
     case 'storage-failed':
-      return 'Failed to persist license to the OS keychain.';
+      return { key: 'license.verify.storageFailed' };
   }
 }

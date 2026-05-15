@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, Lightbulb, Blinds, ToggleLeft, DoorClosed, Thermometer, ShieldAlert, Zap, Cable, Cpu } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { topKeyAndId } from '../../core/log-view.js';
 import type { LogEntry } from '../../core/types.js';
@@ -68,17 +69,21 @@ function extractActivity(
     kind,
     id: top.id,
     label: node?.label,
-    delta: delta || node?.state || node?.status || 'change',
+    delta: delta || node?.state || node?.status || '',
     status: node?.status ?? 'unknown',
   };
 }
 
-function formatDelta(ms: number): string {
+type DeltaKey =
+  | { kind: 'now' }
+  | { kind: 'seconds'; n: number }
+  | { kind: 'minutes'; n: number };
+
+function deltaKey(ms: number): DeltaKey {
   const secs = Math.round(ms / 1000);
-  if (secs < 1) return 'now';
-  if (secs < 60) return `−${secs}s`;
-  const mins = Math.round(secs / 60);
-  return `−${mins}m`;
+  if (secs < 1) return { kind: 'now' };
+  if (secs < 60) return { kind: 'seconds', n: secs };
+  return { kind: 'minutes', n: Math.round(secs / 60) };
 }
 
 interface RecentActivityPaneProps {
@@ -99,8 +104,16 @@ export function RecentActivityPane({
   windowMs = DEFAULT_WINDOW_MS,
   className,
 }: RecentActivityPaneProps) {
+  const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
   const [now, setNow] = useState<number>(() => Date.now());
+
+  const formatDelta = (ms: number): string => {
+    const dk = deltaKey(ms);
+    if (dk.kind === 'now') return t('recentActivity.deltaNow');
+    if (dk.kind === 'seconds') return t('recentActivity.deltaSeconds', { n: dk.n });
+    return t('recentActivity.deltaMinutes', { n: dk.n });
+  };
 
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -150,7 +163,7 @@ export function RecentActivityPane({
 
   return (
     <section
-      aria-label="Recent device activity"
+      aria-label={t('recentActivity.aria')}
       className={cn(
         'border-border/60 bg-pane/30 flex shrink-0 flex-col gap-1 border-b px-3 py-2',
         className,
@@ -165,17 +178,17 @@ export function RecentActivityPane({
           )}
           aria-hidden
         />
-        <span>Recent activity</span>
+        <span>{t('recentActivity.title')}</span>
         <span
           className="text-muted-foreground/80 ml-auto font-mono text-xs tracking-normal normal-case"
           aria-live="polite"
         >
-          last {Math.round(windowMs / 1000)}s · {rows.length}
+          {t('recentActivity.status', { seconds: Math.round(windowMs / 1000), count: rows.length })}
         </span>
       </header>
       {rows.length === 0 ? (
         <p className="text-muted-foreground/70 px-1 py-2 text-[11px]">
-          Waiting for device events…
+          {t('recentActivity.empty')}
         </p>
       ) : (
         <ul role="list" className="flex flex-col">
@@ -187,7 +200,7 @@ export function RecentActivityPane({
                   type="button"
                   onClick={() => onFilterById(row.id)}
                   className="hover:bg-accent/40 grid w-full grid-cols-[34px_14px_38px_1fr_auto] items-center gap-2 rounded-md px-1.5 py-1 text-left"
-                  title={`Filter log to id:${row.id}`}
+                  title={t('recentActivity.filterTitle', { id: row.id })}
                 >
                   <span className="text-muted-foreground font-mono text-xs tabular-nums">
                     {formatDelta(now - row.ts)}
@@ -203,7 +216,7 @@ export function RecentActivityPane({
                   </span>
                   <span className="flex min-w-0 flex-col leading-tight">
                     <span className="truncate text-[11.5px]">
-                      {row.label ?? <span className="italic">id {row.id}</span>}
+                      {row.label ?? <span className="italic">{t('recentActivity.fallbackLabel', { id: row.id })}</span>}
                     </span>
                     <span
                       className={cn(
@@ -211,11 +224,11 @@ export function RecentActivityPane({
                         row.level === 'error' && 'text-destructive/80',
                       )}
                     >
-                      {row.delta}
+                      {row.delta || t('recentActivity.fallbackDelta')}
                     </span>
                   </span>
                   <span className="text-muted-foreground font-mono text-xs tabular-nums">
-                    {row.latencyMs !== undefined ? `${row.latencyMs}ms` : ''}
+                    {row.latencyMs !== undefined ? t('recentActivity.latencyMs', { n: row.latencyMs }) : ''}
                   </span>
                 </button>
               </li>

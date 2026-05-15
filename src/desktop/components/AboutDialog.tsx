@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CheckCircle2, Download, ExternalLink, GitBranch, RefreshCw, Scale, ShieldCheck, ShieldOff, Terminal, TriangleAlert, User } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, GitBranch, RefreshCw, Scale, ShieldCheck, ShieldOff, Terminal, TriangleAlert } from 'lucide-react';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
+import { Trans, useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { getUpdaterAdapter, runCheck, type CheckOutcome } from '../runtime/updater.js';
@@ -14,10 +15,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  APP_AUTHOR,
-  APP_DISPLAY_NAME,
   APP_REPO,
-  APP_TAGLINE,
   APP_VERSION,
   LICENSE_DOC_LINKS,
   LICENSE_SUMMARY,
@@ -29,7 +27,6 @@ import {
 } from '../runtime/acknowledgements.generated.js';
 import {
   FEATURE_IDS,
-  FEATURES,
   getBundleRaw,
   getFeatureLicensePayload,
   type FeatureId,
@@ -66,7 +63,6 @@ function ExternalAnchor({ href, children }: { href: string; children: ReactNode 
 
 interface ActiveLicenseRow {
   id: FeatureId;
-  title: string;
   payload: LicensePayload | null;
   expired: boolean;
   bundle: boolean;
@@ -83,7 +79,6 @@ function readActiveLicenses(): ActiveLicenseRow[] {
     const payload = getFeatureLicensePayload(id);
     return {
       id,
-      title: FEATURES[id].title.replace(/ commercial license$/i, ''),
       payload,
       expired: !payload && Boolean(bundleExpired),
       bundle: payload?.f === '*',
@@ -91,8 +86,8 @@ function readActiveLicenses(): ActiveLicenseRow[] {
   });
 }
 
-function formatLicenseExp(exp: number | undefined): string {
-  if (exp === undefined) return 'perpetual';
+function formatLicenseExpDate(exp: number | undefined): string | null {
+  if (exp === undefined) return null;
   try {
     return new Date(exp * 1000).toISOString().slice(0, 10);
   } catch {
@@ -101,6 +96,7 @@ function formatLicenseExp(exp: number | undefined): string {
 }
 
 function UpdatesTab() {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<CheckOutcome | undefined>(undefined);
 
@@ -118,41 +114,41 @@ function UpdatesTab() {
   return (
     <div className="space-y-3 pt-2 text-xs">
       <p className="text-muted-foreground">
-        Current version: <span className="font-mono">v{APP_VERSION}</span>.
+        <Trans i18nKey="about.updatesVersion" values={{ version: APP_VERSION }} components={{ mono: <span className="font-mono" /> }} />
       </p>
       <Button size="sm" onClick={handleCheck} disabled={busy}>
         {busy ? (
           <>
-            <RefreshCw className="size-3.5 animate-spin" aria-hidden /> Checking…
+            <RefreshCw className="size-3.5 animate-spin" aria-hidden /> {t('about.updatesChecking')}
           </>
         ) : (
           <>
-            <RefreshCw className="size-3.5" aria-hidden /> Check for updates
+            <RefreshCw className="size-3.5" aria-hidden /> {t('about.updatesCheck')}
           </>
         )}
       </Button>
       {outcome?.kind === 'up-to-date' && (
         <div className="inline-flex items-center gap-1.5 text-emerald-500">
-          <CheckCircle2 className="size-3.5" aria-hidden /> You are on the latest version.
+          <CheckCircle2 className="size-3.5" aria-hidden /> {t('about.updatesUpToDate')}
         </div>
       )}
       {outcome?.kind === 'available' && (
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1.5 text-primary">
             <Download className="size-3.5" aria-hidden />
-            Update available: v{outcome.info.version}
+            {t('about.updatesAvailable', { version: outcome.info.version })}
           </div>
           {outcome.info.body ? (
             <p className="text-muted-foreground whitespace-pre-wrap">{outcome.info.body}</p>
           ) : null}
           <p className="text-muted-foreground">
-            Close this dialog to use the banner&apos;s install action.
+            {t('about.updatesAvailableHint')}
           </p>
         </div>
       )}
       {outcome?.kind === 'unsupported' && (
         <div className="inline-flex items-center gap-1.5 text-muted-foreground">
-          <TriangleAlert className="size-3.5" aria-hidden /> Auto-update not available in this build.
+          <TriangleAlert className="size-3.5" aria-hidden /> {t('about.updatesUnsupported')}
         </div>
       )}
       {outcome?.kind === 'error' && (
@@ -165,6 +161,7 @@ function UpdatesTab() {
 }
 
 export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
+  const { t } = useTranslation();
   const [activeLicenses, setActiveLicenses] = useState<ActiveLicenseRow[]>(() => readActiveLicenses());
   useEffect(() => {
     if (open) setActiveLicenses(readActiveLicenses());
@@ -180,25 +177,23 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             </div>
             <div className="flex flex-col">
               <DialogTitle className="flex items-center gap-2">
-                <span>{APP_DISPLAY_NAME}</span>
+                <span>{t('about.appDisplayName')}</span>
                 <Badge variant="secondary" className="font-mono text-xs">
-                  v{APP_VERSION}
+                  {t('about.version', { version: APP_VERSION })}
                 </Badge>
               </DialogTitle>
-              <DialogDescription>{APP_TAGLINE}</DialogDescription>
+              <DialogDescription>{t('about.appTagline')}</DialogDescription>
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {APP_AUTHOR ? (
-              <span className="inline-flex items-center gap-1">
-                <User className="size-3" aria-hidden />
-                {APP_AUTHOR}
-              </span>
-            ) : null}
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('about.madeBy')} <span aria-label={t('about.loveAria')}>🤍</span> {t('about.byAuthorAt')}{' '}
+            <ExternalAnchor href="https://rightright.me">rightright.me</ExternalAnchor>
+          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {APP_REPO ? (
               <ExternalAnchor href={APP_REPO}>
                 <GitBranch className="size-3" aria-hidden />
-                <span>Repository</span>
+                <span>{t('about.repository')}</span>
               </ExternalAnchor>
             ) : null}
           </div>
@@ -208,29 +203,28 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           <TabsList>
             <TabsTrigger value="license">
               <Scale className="size-3.5" aria-hidden />
-              License
+              {t('about.tabLicense')}
             </TabsTrigger>
-            <TabsTrigger value="acks">Acknowledgements</TabsTrigger>
+            <TabsTrigger value="acks">{t('about.tabAcknowledgements')}</TabsTrigger>
             <TabsTrigger value="updates">
               <Download className="size-3.5" aria-hidden />
-              Updates
+              {t('about.tabUpdates')}
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="license" className="space-y-3 pt-2">
             <p className="text-xs text-muted-foreground">
-              Lares4 Console ships under a dual-license model. Core source is open under
-              the ISC License. Files under <code className="rounded bg-muted px-1 py-0.5 text-[11px]">src/pro/**</code>{' '}
-              are licensed under the PolyForm Noncommercial License 1.0.0 — free for
-              personal, research, education, and other noncommercial use; commercial use
-              requires a separate license.
+              <Trans
+                i18nKey="about.licenseIntro"
+                components={{ code: <code className="rounded bg-muted px-1 py-0.5 text-[11px]" /> }}
+              />
             </p>
             <div className="rounded-md border">
               <table className="w-full text-xs">
                 <thead className="bg-muted/40 text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-1.5 text-left font-medium">Path</th>
-                    <th className="px-3 py-1.5 text-left font-medium">License</th>
+                    <th className="px-3 py-1.5 text-left font-medium">{t('about.tablePath')}</th>
+                    <th className="px-3 py-1.5 text-left font-medium">{t('about.tableLicense')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -245,61 +239,59 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             </div>
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
-                <h3 className="text-xs font-medium">Active commercial licenses</h3>
-                <span className="text-xs text-muted-foreground">
-                  Pro features under PolyForm Noncommercial 1.0.0
-                </span>
+                <h3 className="text-xs font-medium">{t('about.activeLicenses')}</h3>
+                <span className="text-xs text-muted-foreground">{t('about.activeLicensesNote')}</span>
               </div>
               <div className="rounded-md border">
                 <table className="w-full text-xs">
                   <thead className="bg-muted/40 text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-1.5 text-left font-medium">Feature</th>
-                      <th className="px-3 py-1.5 text-left font-medium">Status</th>
-                      <th className="px-3 py-1.5 text-left font-medium">Licensee</th>
-                      <th className="px-3 py-1.5 text-left font-medium">Expires</th>
+                      <th className="px-3 py-1.5 text-left font-medium">{t('about.colFeature')}</th>
+                      <th className="px-3 py-1.5 text-left font-medium">{t('about.colStatus')}</th>
+                      <th className="px-3 py-1.5 text-left font-medium">{t('about.colLicensee')}</th>
+                      <th className="px-3 py-1.5 text-left font-medium">{t('about.colExpires')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activeLicenses.map((row) => (
                       <tr key={row.id} className="border-t">
-                        <td className="px-3 py-1.5">{row.title}</td>
+                        <td className="px-3 py-1.5">{t(`about.featureShort.${row.id}`)}</td>
                         <td className="px-3 py-1.5">
                           {row.payload ? (
                             <span className="inline-flex items-center gap-1 text-emerald-500">
                               <ShieldCheck className="size-3.5" aria-hidden />
-                              Active{row.bundle ? ' (bundle)' : ''}
+                              {t('about.statusActive')}{row.bundle ? t('about.statusActiveBundle') : ''}
                             </span>
                           ) : row.expired ? (
                             <span className="inline-flex items-center gap-1 text-destructive">
                               <TriangleAlert className="size-3.5" aria-hidden />
-                              Expired
+                              {t('about.statusExpired')}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-muted-foreground">
                               <ShieldOff className="size-3.5" aria-hidden />
-                              Not activated
+                              {t('about.statusInactive')}
                             </span>
                           )}
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-1.5 font-mono">
-                          {row.payload?.sub ?? '—'}
+                          {row.payload?.sub ?? t('about.dashEmpty')}
                         </td>
                         <td className="px-3 py-1.5 font-mono">
-                          {row.payload ? formatLicenseExp(row.payload.exp) : '—'}
+                          {row.payload
+                            ? formatLicenseExpDate(row.payload.exp) ?? t('about.expPerpetual')
+                            : t('about.dashEmpty')}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Tokens verified offline against bundled Ed25519 public key. Manage keys per feature from each feature&apos;s settings.
-              </p>
+              <p className="text-xs text-muted-foreground">{t('about.verifyNote')}</p>
             </div>
             {APP_REPO ? (
               <div className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">Full text:</span>
+                <span className="text-muted-foreground">{t('about.fullTextLabel')}</span>
                 {LICENSE_DOC_LINKS.map((doc) => (
                   <ExternalAnchor key={doc.path} href={repoFileUrl(doc.path)}>
                     {doc.label}
@@ -314,9 +306,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           </TabsContent>
 
           <TabsContent value="acks" className="pt-2">
-            <p className="text-xs text-muted-foreground pb-2">
-              Built on the following open-source runtime dependencies:
-            </p>
+            <p className="text-xs text-muted-foreground pb-2">{t('about.acksIntro')}</p>
             <ScrollArea className="h-72 rounded-md border">
               <ul className="divide-y text-xs">
                 {ACKNOWLEDGEMENTS.map((dep: AcknowledgementEntry) => (

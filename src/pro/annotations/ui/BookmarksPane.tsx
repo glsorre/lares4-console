@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Bookmark as BookmarkIcon, Download, Pencil, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Bookmark } from '../types.js';
 import { buildMessageListItems, formatLogClock } from '../../../core/log-view.js';
 import type { LogEntry } from '../../../core/types.js';
@@ -27,6 +28,7 @@ interface BookmarksPaneProps {
 export function BookmarksPane({
   bookmarks, entries, selectedId, onSelect, onRemove, onUpdateNote, onExport, isLicensed,
 }: BookmarksPaneProps) {
+  const { t } = useTranslation();
   const { snapshot } = useSessionController();
   const connected = snapshot.connected;
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
@@ -42,7 +44,7 @@ export function BookmarksPane({
   async function handleExport() {
     try {
       const path = await onExport();
-      setExportStatus(path ? `Saved: ${path}` : undefined);
+      setExportStatus(path ? t('pro.bookmarks.exportSavedAt', { path }) : undefined);
     } catch (error) {
       setExportStatus(error instanceof Error ? error.message : String(error));
     }
@@ -61,10 +63,10 @@ export function BookmarksPane({
               className="h-7 gap-1.5 text-xs"
               onClick={() => void handleExport()}
               disabled={bookmarks.length === 0}
-              aria-label="Export bookmarks"
+              aria-label={t('pro.bookmarks.exportAria')}
             >
               <Download className="size-3.5" aria-hidden />
-              Export
+              {t('pro.bookmarks.exportBtn')}
             </Button>
           </div>
         )}
@@ -78,21 +80,21 @@ export function BookmarksPane({
                 <BookmarkIcon className="size-4" aria-hidden />
               </div>
               <div className="space-y-1.5">
-                <p className="text-foreground text-sm font-semibold tracking-tight">No bookmarks</p>
+                <p className="text-foreground text-sm font-semibold tracking-tight">{t('pro.bookmarks.noBookmarksTitle')}</p>
                 <p className="text-muted-foreground mx-auto max-w-[18rem] text-xs leading-relaxed">
-                  Bookmarks are a commercial feature. Unlock to start pinning and annotating log entries.
+                  {t('pro.bookmarks.noBookmarksLockedDesc')}
                 </p>
               </div>
-              <ProFeatureLock featureId="annotations" label="Unlock bookmarks" />
+              <ProFeatureLock featureId="annotations" label={t('pro.bookmarks.unlockBookmarks')} />
             </div>
           ) : (
             <PaneEmpty
               icon={BookmarkIcon}
-              title="No bookmarks"
+              title={t('pro.bookmarks.noBookmarksTitle')}
               description={
                 connected
-                  ? 'Click the star on any log row to bookmark it. Bookmarks persist until you clear the log buffer.'
-                  : 'Connect a panel from the sidebar to capture log rows you can bookmark.'
+                  ? t('pro.bookmarks.noBookmarksConnected')
+                  : t('pro.bookmarks.noBookmarksDisconnected')
               }
             />
           )
@@ -118,10 +120,10 @@ export function BookmarksPane({
                       >
                         {item && <LogTagChip tag={item.tag} />}
                         <span className="text-muted-foreground font-mono text-[0.65rem] tabular-nums shrink-0">
-                          {item ? formatLogClock(item.ts) : '—'}
+                          {item ? formatLogClock(item.ts) : t('pro.bookmarks.dashEmpty')}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-sm">
-                          {item?.preview ?? <span className="text-muted-foreground italic">entry no longer in buffer</span>}
+                          {item?.preview ?? <span className="text-muted-foreground italic">{t('pro.bookmarks.entryGone')}</span>}
                         </span>
                       </button>
                       <div className="mt-1.5 flex items-center gap-1.5">
@@ -138,7 +140,7 @@ export function BookmarksPane({
                                 }
                                 if (event.key === 'Escape') setEditingId(undefined);
                               }}
-                              placeholder="Note"
+                              placeholder={t('pro.bookmarks.notePlaceholder')}
                               className="h-7 flex-1 text-xs"
                             />
                             <Button
@@ -151,13 +153,13 @@ export function BookmarksPane({
                                 setEditingId(undefined);
                               }}
                             >
-                              Save
+                              {t('pro.bookmarks.save')}
                             </Button>
                           </>
                         ) : (
                           <>
                             <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs italic">
-                              {bookmark.note ?? 'no note'}
+                              {bookmark.note ?? t('pro.bookmarks.noNote')}
                             </span>
                             {isLicensed && (
                               <>
@@ -170,8 +172,8 @@ export function BookmarksPane({
                                     setEditingId(bookmark.groupId);
                                     setDraft(bookmark.note ?? '');
                                   }}
-                                  aria-label="Edit note"
-                                  title="Edit note"
+                                  aria-label={t('pro.bookmarks.editNote')}
+                                  title={t('pro.bookmarks.editNote')}
                                 >
                                   <Pencil className="size-3" aria-hidden />
                                 </Button>
@@ -181,8 +183,8 @@ export function BookmarksPane({
                                   variant="ghost"
                                   className="text-muted-foreground hover:text-destructive h-6 w-6 p-0"
                                   onClick={() => onRemove(bookmark.groupId)}
-                                  aria-label="Remove bookmark"
-                                  title="Remove bookmark"
+                                  aria-label={t('pro.bookmarks.removeBookmark')}
+                                  title={t('pro.bookmarks.removeBookmark')}
                                 >
                                   <Trash2 className="size-3" aria-hidden />
                                 </Button>
@@ -200,7 +202,7 @@ export function BookmarksPane({
         )}
         {!isLicensed && bookmarks.length > 0 && (
           <div className="border-border/60 border-t px-3 py-2">
-            <ProFeatureLock featureId="annotations" label="Unlock bookmark editing & export" variant="row" />
+            <ProFeatureLock featureId="annotations" label={t('pro.bookmarks.unlockEditExport')} variant="row" />
           </div>
         )}
       </CardContent>

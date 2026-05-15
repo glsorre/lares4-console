@@ -1,31 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import {
+  Download,
   Eraser,
   Globe,
   Hash,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
-  Radio,
   Search,
   Signal,
   Tag as TagIcon,
   Terminal,
   X,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { computeLogStats } from '../../core/log-stats.js';
 import {
   LEVEL_VALUES,
   SOURCE_VALUES,
@@ -39,7 +31,6 @@ import {
 import type { ChipKind, ChipToken } from '../../core/log-query.js';
 import { entrySource } from '../../core/types.js';
 import type { LogEntry, LogLevel, LogSource, LogTag } from '../../core/types.js';
-import { formatReplayLabel } from '../runtime/status-chips.js';
 import { getTagDotClass } from '../runtime/log-tag-classes.js';
 import type { SessionSnapshot } from '../runtime/session-controller.js';
 import { AutocompletePopover, type AutocompletePickHelpers } from './AutocompletePopover.js';
@@ -57,7 +48,7 @@ interface ConsoleTopBarProps {
   onToggleSidebar: () => void;
   onToggleTopologyRail: () => void;
   onClearLogs: () => void;
-  onSelectTopId: (id: string) => void;
+  onExportLogs: () => void;
 }
 
 export function ConsoleTopBar({
@@ -71,16 +62,11 @@ export function ConsoleTopBar({
   onToggleSidebar,
   onToggleTopologyRail,
   onClearLogs,
-  onSelectTopId,
+  onExportLogs,
 }: ConsoleTopBarProps) {
-  const [tick, setTick] = useState(0);
+  const { t } = useTranslation();
   const [pulse, setPulse] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const interval = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     if (searchPulseKey === undefined) return;
@@ -103,15 +89,9 @@ export function ConsoleTopBar({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const topIds = useMemo(() => {
-    void tick;
-    return computeLogStats(snapshot.logEntries, { windowMs: 5000, topIdsLimit: 8 }).topIds;
-  }, [snapshot.logEntries, tick]);
-
   const compiledQuery = useMemo(() => compileLogQuery(searchInput), [searchInput]);
 
   const deviceCount = snapshot.topology.total;
-  const replayActive = snapshot.replayStatus && snapshot.replayStatus !== 'off';
 
   return (
     <div
@@ -133,7 +113,7 @@ export function ConsoleTopBar({
               size="sm"
               className="text-muted-foreground h-7 w-7 shrink-0 p-0"
               onClick={onToggleSidebar}
-              aria-label={sidebarOpen ? 'Close connections panel' : 'Open connections panel'}
+              aria-label={sidebarOpen ? t('console.topBar.sidebarClose') : t('console.topBar.sidebarOpen')}
               aria-pressed={sidebarOpen}
             >
               {sidebarOpen
@@ -141,26 +121,11 @@ export function ConsoleTopBar({
                 : <PanelLeftOpen className="size-4" aria-hidden />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{sidebarOpen ? 'Hide connections' : 'Show connections'}</TooltipContent>
+          <TooltipContent>{sidebarOpen ? t('console.topBar.hideConnections') : t('console.topBar.showConnections')}</TooltipContent>
         </Tooltip>
 
         {snapshot.connected && (
-          <>
-            <span className="text-muted-foreground font-mono text-xs tabular-nums">
-              <span className="text-foreground">{msgCount}</span> {msgCount === 1 ? 'msg' : 'msgs'}
-            </span>
-            <StatsCluster entries={snapshot.logEntries} pendingTxCount={snapshot.pendingTxCount} />
-            {replayActive ? (
-              <div
-                className="inline-flex items-center gap-1.5 rounded-md bg-background/60 ring-1 ring-border/40 px-2 py-0.5 text-xs text-muted-foreground"
-                title="Replay status"
-              >
-                <Radio className="size-3.5 opacity-70" aria-hidden />
-                <span>replay</span>
-                <span className="text-foreground font-mono">{formatReplayLabel(snapshot.replayStatus)}</span>
-              </div>
-            ) : null}
-          </>
+          <StatsCluster entries={snapshot.logEntries} pendingTxCount={snapshot.pendingTxCount} />
         )}
       </div>
 
@@ -185,45 +150,23 @@ export function ConsoleTopBar({
 
       {/* Right: actions */}
       <div className="flex items-center gap-1">
-        {snapshot.connected && topIds.length > 0 && (
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
-                    aria-label="Top device IDs"
-                  >
-                    <Hash className="size-3.5" aria-hidden />
-                    Top IDs
-                    <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">
-                      {topIds.length}
-                    </span>
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>Most-referenced IDs</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuLabel className="text-[0.65rem] uppercase tracking-wide">
-                Top IDs · last 5s
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {topIds.map(({ id, count }) => (
-                <DropdownMenuItem
-                  key={id}
-                  onSelect={() => onSelectTopId(id)}
-                  className="font-mono text-xs"
-                >
-                  <span className="text-foreground">{id}</span>
-                  <span className="text-muted-foreground ml-auto tabular-nums">×{count}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {msgCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
+                onClick={onExportLogs}
+                aria-label={t('console.topBar.exportLogsAria')}
+              >
+                <Download className="size-3.5" aria-hidden />
+                {t('console.topBar.exportLogsBtn')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('console.topBar.exportLogsTooltip')}</TooltipContent>
+          </Tooltip>
         )}
 
         {msgCount > 0 && (
@@ -235,13 +178,13 @@ export function ConsoleTopBar({
                 size="sm"
                 className="text-muted-foreground hover:text-foreground h-7 gap-1.5 text-xs"
                 onClick={onClearLogs}
-                aria-label="Clear logs"
+                aria-label={t('console.topBar.clearLogsAria')}
               >
                 <Eraser className="size-3.5" aria-hidden />
-                Clear
+                {t('console.topBar.clearLogsBtn')}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Clear log entries</TooltipContent>
+            <TooltipContent>{t('console.topBar.clearLogsTooltip')}</TooltipContent>
           </Tooltip>
         )}
 
@@ -254,11 +197,11 @@ export function ConsoleTopBar({
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
                 onClick={onToggleTopologyRail}
-                aria-label="Open devices rail"
+                aria-label={t('console.topBar.openDevicesAria')}
                 aria-pressed={topologyRailOpen}
               >
                 <PanelRightOpen className="size-3.5" aria-hidden />
-                Devices
+                {t('console.topBar.openDevicesBtn')}
                 {deviceCount > 0 && (
                   <span className="bg-muted text-muted-foreground rounded px-1 font-mono text-[0.6rem] tabular-nums">
                     {deviceCount}
@@ -266,7 +209,7 @@ export function ConsoleTopBar({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Show topology rail</TooltipContent>
+            <TooltipContent>{t('console.topBar.openDevicesTooltip')}</TooltipContent>
           </Tooltip>
         )}
       </div>
@@ -283,12 +226,12 @@ interface SearchChipsInputProps {
   error?: string;
 }
 
-const KEY_HINTS: ReadonlyArray<{ key: ChipKind; hint: string }> = [
-  { key: 'source', hint: 'filter by origin (command, lifecycle, wire)' },
-  { key: 'tag', hint: 'filter by message type' },
-  { key: 'level', hint: 'filter by log level' },
-  { key: 'id', hint: 'find a device ID in payload' },
-  { key: 'cmd', hint: 'filter by command name' },
+const KEY_HINT_KEYS: ReadonlyArray<{ key: ChipKind; hintKey: string }> = [
+  { key: 'source', hintKey: 'search.sourceHint' },
+  { key: 'tag', hintKey: 'search.tagHint' },
+  { key: 'level', hintKey: 'search.levelHint' },
+  { key: 'id', hintKey: 'search.idHint' },
+  { key: 'cmd', hintKey: 'search.cmdHint' },
 ];
 
 const KEY_RE = /(?:^|\s)(tag|source|level|id|cmd):(\S*)$/i;
@@ -319,7 +262,9 @@ interface BuiltSuggestions {
   actions: SuggestionAction[];
 }
 
-function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers): BuiltSuggestions {
+type TFn = (key: string, options?: Record<string, unknown>) => string;
+
+function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers, t: TFn): BuiltSuggestions {
   const groups: AutocompleteGroup[] = [];
   const actions: SuggestionAction[] = [];
 
@@ -351,7 +296,7 @@ function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers):
           ),
         };
       });
-      groups.push({ heading: 'Tag', items });
+      groups.push({ heading: t('search.tagHeading'), items });
       return { groups, actions };
     }
 
@@ -376,7 +321,7 @@ function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers):
           ),
         };
       });
-      groups.push({ heading: 'Source', items });
+      groups.push({ heading: t('search.sourceHeading'), items });
       return { groups, actions };
     }
 
@@ -401,20 +346,20 @@ function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers):
           ),
         };
       });
-      groups.push({ heading: 'Level', items });
+      groups.push({ heading: t('search.levelHeading'), items });
       return { groups, actions };
     }
 
     actions.push({ run: () => {}, commits: false });
     groups.push({
-      heading: key === 'id' ? 'Device ID' : 'Command',
+      heading: key === 'id' ? t('search.deviceIdHeading') : t('search.commandHeading'),
       items: [
         {
           key: `${key}-hint`,
           disabled: true,
           label: (
             <span className="text-muted-foreground font-sans text-[0.7rem]">
-              Type a value and press Space to commit.
+              {t('search.freeformHelp')}
             </span>
           ),
         },
@@ -425,26 +370,27 @@ function buildSuggestions(ctx: SuggestionContext, handlers: SuggestionHandlers):
 
   const fragment = ctx.trailing.trim().toLowerCase();
   const filtered = fragment
-    ? KEY_HINTS.filter(({ key }) => key.startsWith(fragment))
-    : KEY_HINTS;
+    ? KEY_HINT_KEYS.filter(({ key }) => key.startsWith(fragment))
+    : KEY_HINT_KEYS;
   if (filtered.length === 0) return { groups: [], actions: [] };
-  const items: AutocompleteItem[] = filtered.map(({ key, hint }) => {
+  const items: AutocompleteItem[] = filtered.map(({ key, hintKey }) => {
     actions.push({ run: () => handlers.selectKey(key), commits: false });
     return {
       key: `key-${key}`,
       label: (
         <>
           <span className="text-foreground">{key}:</span>
-          <span className="text-muted-foreground ml-2 font-sans text-[0.7rem]">{hint}</span>
+          <span className="text-muted-foreground ml-2 font-sans text-[0.7rem]">{t(hintKey)}</span>
         </>
       ),
     };
   });
-  groups.push({ heading: 'Filter by', items });
+  groups.push({ heading: t('search.filterByHeading'), items });
   return { groups, actions };
 }
 
 function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: SearchChipsInputProps) {
+  const { t } = useTranslation();
   const split = useMemo(() => splitQuery(value), [value]);
   const trailing = split.trailing;
   const [focused, setFocused] = useState(false);
@@ -505,8 +451,9 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
           commitChip,
           selectKey: (key) => setTrailing(`${key}:`),
         },
+        t,
       ),
-    [partial, trailing, counts, alreadySelected, commitChip, setTrailing],
+    [partial, trailing, counts, alreadySelected, commitChip, setTrailing, t],
   );
 
   const handlePick = useCallback(
@@ -570,9 +517,9 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
               autoCorrect="off"
               autoCapitalize="off"
               aria-keyshortcuts="Meta+F Control+F"
-              aria-label="Search log entries"
+              aria-label={t('search.label')}
               aria-invalid={error ? true : undefined}
-              placeholder={split.chips.length === 0 ? 'Search or filter  (⌘F)' : ''}
+              placeholder={split.chips.length === 0 ? t('search.placeholder') : ''}
               className="min-w-[6rem] flex-1 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground"
             />
             {value && (
@@ -585,8 +532,8 @@ function SearchChipsInput({ value, onChange, entries, inputRef, pulse, error }: 
                   event.stopPropagation();
                   onChange('');
                 }}
-                aria-label="Clear search"
-                title="Clear search"
+                aria-label={t('search.clearAria')}
+                title={t('search.clearAria')}
               >
                 <X className="size-3" aria-hidden />
               </Button>
@@ -633,6 +580,7 @@ const LEVEL_CHIP_CLASSES: Record<LogLevel, string> = {
 };
 
 function ChipPill({ chip, onRemove }: { chip: ChipToken; onRemove: () => void }) {
+  const { t } = useTranslation();
   const visual = CHIP_KIND_VISUALS[chip.kind];
   const cls = chip.kind === 'level'
     ? LEVEL_CHIP_CLASSES[chip.value as LogLevel] ?? visual.classes
@@ -663,7 +611,7 @@ function ChipPill({ chip, onRemove }: { chip: ChipToken; onRemove: () => void })
           event.stopPropagation();
         }}
         onClick={onRemove}
-        aria-label={`Remove filter ${chip.raw}`}
+        aria-label={t('search.removeFilterAria', { raw: chip.raw })}
       >
         <X className="size-2.5" aria-hidden />
       </button>

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Network, PanelRightClose, Play, Search } from 'lucide-react';
+import { Trans, useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,6 +48,7 @@ export function TopologyPane({
   filter: filterProp,
   onFilterChange,
 }: TopologyPaneProps) {
+  const { t } = useTranslation();
   const isControlled = filterProp !== undefined && onFilterChange !== undefined;
   const [internalFilter, setInternalFilter] = useState('');
   const filter = isControlled ? filterProp! : internalFilter;
@@ -92,7 +94,7 @@ export function TopologyPane({
     )}>
       <div className={cn('flex items-center gap-2', isCompact ? 'min-h-[26px]' : 'min-h-[34px]')}>
         <Network className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
-        <span className={cn('shrink-0 font-medium', isCompact ? 'text-xs' : 'text-sm')}>Devices</span>
+        <span className={cn('shrink-0 font-medium', isCompact ? 'text-xs' : 'text-sm')}>{t('topology.header')}</span>
         {!empty && (
           <span className="text-muted-foreground ml-auto font-mono text-xs tabular-nums shrink-0">
             {filtered.total}{filtered.total !== topology.total ? `/${topology.total}` : ''}
@@ -107,12 +109,12 @@ export function TopologyPane({
                 size="sm"
                 className="text-muted-foreground hover:text-foreground ml-auto h-7 w-7 p-0"
                 onClick={onClose}
-                aria-label="Hide devices rail"
+                aria-label={t('topology.hideAria')}
               >
                 <PanelRightClose className="size-4" aria-hidden />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Hide rail</TooltipContent>
+            <TooltipContent>{t('topology.hideTooltip')}</TooltipContent>
           </Tooltip>
         )}
       </div>
@@ -121,12 +123,12 @@ export function TopologyPane({
           <Search className="text-muted-foreground pointer-events-none absolute left-2 size-3.5" aria-hidden />
           <Input
             type="search"
-            placeholder="Filter id, label, state"
+            placeholder={t('topology.filterPlaceholder')}
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             spellCheck={false}
             className="h-7 pl-7 font-mono text-xs"
-            aria-label="Filter topology"
+            aria-label={t('topology.filterAria')}
           />
         </div>
       )}
@@ -139,9 +141,9 @@ export function TopologyPane({
         <Network className="size-4" aria-hidden />
       </div>
       <div className="space-y-1">
-        <p className="text-foreground/75 text-sm font-medium">No devices yet</p>
+        <p className="text-foreground/75 text-sm font-medium">{t('topology.emptyTitle')}</p>
         <p className="text-muted-foreground max-w-[16rem] text-xs leading-relaxed">
-          Connect to a panel or run <span className="font-mono">state all</span> to populate the topology.
+          <Trans i18nKey="topology.emptyBody" components={{ mono: <span className="font-mono" /> }} />
         </p>
       </div>
       {canRunStateAll && onRunStateAll && (
@@ -153,7 +155,7 @@ export function TopologyPane({
           className="h-7 gap-1.5 text-xs"
         >
           <Play className="size-3.5" aria-hidden />
-          Run <span className="font-mono">state all</span>
+          {t('topology.runStateAllPrefix')} <span className="font-mono">{t('topology.runStateAllCmd')}</span>
         </Button>
       )}
     </div>
@@ -186,20 +188,20 @@ export function TopologyPane({
                         type="button"
                         className="hover:bg-muted/60 flex w-full items-center gap-2 px-3 py-1.5 text-left"
                         onClick={() => onFilterById(node.id)}
-                        title={`Filter log to id:${node.id}`}
+                        title={t('topology.filterByIdTitle', { id: node.id })}
                       >
                         <span className="text-muted-foreground w-10 shrink-0 font-mono text-xs tabular-nums">
                           {node.id}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-sm">
-                          {node.label ?? <span className="text-muted-foreground italic">id {node.id}</span>}
+                          {node.label ?? <span className="text-muted-foreground italic">{t('topology.idFallback', { id: node.id })}</span>}
                         </span>
                         <span
                           className={cn(
                             'shrink-0 rounded px-1.5 py-0.5 font-mono text-xs uppercase ring-1',
                             STATUS_STYLE[node.status],
                           )}
-                          title={node.state ?? 'unknown'}
+                          title={node.state ?? t('topology.statusUnknown')}
                         >
                           {node.state ?? node.status}
                         </span>
@@ -245,13 +247,13 @@ export function TopologyPane({
                           )}
                           style={recent ? { boxShadow: 'inset 2px 0 0 var(--primary)' } : undefined}
                           onClick={() => onFilterById(node.id)}
-                          title={`Filter log to id:${node.id}`}
+                          title={t('topology.filterByIdTitle', { id: node.id })}
                         >
                           <span className="text-muted-foreground font-mono text-xs tabular-nums">
                             {node.id}
                           </span>
                           <span className="min-w-0 truncate text-[13px]">
-                            {node.label ?? <span className="text-muted-foreground italic">id {node.id}</span>}
+                            {node.label ?? <span className="text-muted-foreground italic">{t('topology.idFallback', { id: node.id })}</span>}
                           </span>
                           <span className="text-muted-foreground font-mono text-xs tracking-normal">
                             {node.state ?? ''}

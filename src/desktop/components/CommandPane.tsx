@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { SessionSnapshot } from '../runtime/session-controller.js';
 import { suggestCompletions } from '../../core/autocomplete.js';
 import { applySuggestion } from './command-pane-apply.js';
@@ -26,6 +27,7 @@ export function CommandPane({
   onHistoryUp,
   onHistoryDown,
 }: CommandPaneProps) {
+  const { t } = useTranslation();
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -76,7 +78,7 @@ export function CommandPane({
           return (
           <div className="relative flex items-center gap-2">
             <label htmlFor="lares4-command-input" className="sr-only">
-              Command input
+              {t('command.inputLabel')}
             </label>
             <div
               className={cn(
@@ -98,7 +100,7 @@ export function CommandPane({
                 value={command}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="Type a command — try state all, lights on 1, or help"
+                placeholder={t('command.placeholder')}
                 onFocus={() => setFocused(true)}
                 onBlur={() => setFocused(false)}
                 onChange={(event) => onCommandChange(event.target.value)}
@@ -134,13 +136,13 @@ export function CommandPane({
                   disabled={!canRun}
                   onClick={runCommand}
                 >
-                  Run
+                  {t('command.run')}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <span className="font-mono text-meta">Enter</span> run ·{' '}
-                <span className="font-mono text-meta">Tab</span> complete ·{' '}
-                <span className="font-mono text-meta">↑↓</span> history
+                <span className="font-mono text-meta">{t('command.keyEnter')}</span> {t('command.actRun')} ·{' '}
+                <span className="font-mono text-meta">{t('command.keyTab')}</span> {t('command.actComplete')} ·{' '}
+                <span className="font-mono text-meta">{t('command.keyArrows')}</span> {t('command.actHistory')}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -149,12 +151,14 @@ export function CommandPane({
       </AutocompletePopover>
       {snapshot.readOnly && (
         <p className="mt-1.5 px-1 text-meta text-amber-700 dark:text-amber-300">
-          Read-only mode — device commands are blocked. Local commands (format, events, replay, export) still run.
+          {t('command.readOnlyHint')}
         </p>
       )}
       {!command && !popoverOpen && !snapshot.readOnly && (
         <p className="text-muted-foreground/70 mt-1.5 px-1 text-meta">
-          <span className="font-mono">Tab</span> autocomplete · <span className="font-mono">↑↓</span> history · <span className="font-mono">Enter</span> run
+          <span className="font-mono">{t('command.keyTab')}</span> {t('command.actAutocomplete')} ·{' '}
+          <span className="font-mono">{t('command.keyArrows')}</span> {t('command.actHistory')} ·{' '}
+          <span className="font-mono">{t('command.keyEnter')}</span> {t('command.actRun')}
         </p>
       )}
     </div>

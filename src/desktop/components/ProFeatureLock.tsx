@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import type { ComponentType, SVGProps } from 'react';
 import { Lock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CommercialLicenseDialog } from './CommercialLicenseDialog';
 import { FeatureGateEmptyState } from './FeatureGateEmptyState';
 import type { FeatureId } from '../runtime/commercial-license-prefs';
-
-const DEFAULT_TOOLTIP = 'Pro feature — click to unlock';
 
 type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -49,8 +48,9 @@ export function ProFeatureLock({
   leadingIcon: LeadingIcon,
   onLicenseChanged,
 }: ProFeatureLockProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const tooltipText = tooltip ?? DEFAULT_TOOLTIP;
+  const tooltipText = tooltip ?? t('pro.lock.defaultTooltip');
   const ariaLabel = `${label} — ${tooltipText}`;
 
   if (variant === 'pane') {

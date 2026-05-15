@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Bell, Bookmark as BookmarkIcon, FileSearch, Lock, PanelRightClose, Search, Zap } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -21,6 +22,7 @@ import { TopologyPane } from '../components/TopologyPane.js';
 import { TriggersPane } from '@pro/triggers/ui/TriggersPane.js';
 import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
+import { showSaveDialog } from '../runtime/tauri-fs.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { compileChipFilters } from '../../core/log-query.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
@@ -53,6 +55,7 @@ function consumeLegacySourceTokens(): string[] {
 }
 
 export function ConsolePage() {
+  const { t } = useTranslation();
   const { controller, snapshot } = useSessionController();
   const { sidebarOpen, toggleSidebar } = useOutletContext<LayoutOutletContext>();
   const wide = useWideLayout();
@@ -160,6 +163,21 @@ export function ConsolePage() {
     void controller.submit('state all');
   }
 
+  async function handleExportLogs() {
+    const defaultPath = `session-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+    const target = await showSaveDialog({
+      defaultPath,
+      title: t('console.topBar.exportLogsDialogTitle'),
+      filters: [{ name: 'Log file', extensions: ['log', 'txt'] }],
+    });
+    if (!target) return;
+    try {
+      await controller.exportLogs(target, (path) => t('console.topBar.exportLogsSaved', { path }));
+    } catch {
+      // controller pushes its own error log row
+    }
+  }
+
   const macrosLicensed = snapshot.licensed.macros;
   const enabledTriggerCount = snapshot.triggers.filter((r) => r.enabled).length;
 
@@ -171,24 +189,24 @@ export function ConsolePage() {
       badge?: number;
       lockFeature?: FeatureId;
     }> = [
-      { value: 'detail', label: 'Detail', icon: FileSearch },
+      { value: 'detail', label: t('consolePage.tabDetail'), icon: FileSearch },
       {
         value: 'bookmarks',
-        label: 'Bookmarks',
+        label: t('consolePage.tabBookmarks'),
         icon: BookmarkIcon,
         badge: snapshot.bookmarks.length || undefined,
         lockFeature: annotationsLicensed ? undefined : 'annotations',
       },
       {
         value: 'triggers',
-        label: 'Triggers',
+        label: t('consolePage.tabTriggers'),
         icon: Bell,
         badge: enabledTriggerCount || undefined,
         lockFeature: triggersLicensed ? undefined : 'triggers',
       },
       {
         value: 'macros',
-        label: 'Macros',
+        label: t('consolePage.tabMacros'),
         icon: Zap,
         badge: snapshot.macros.length || undefined,
         lockFeature: macrosLicensed ? undefined : 'macros',
@@ -196,6 +214,7 @@ export function ConsolePage() {
     ];
     return tabs;
   }, [
+    t,
     snapshot.bookmarks.length,
     snapshot.macros.length,
     enabledTriggerCount,
@@ -258,8 +277,8 @@ export function ConsolePage() {
         ) : (
           <FeatureGateEmptyState
             featureId="annotations"
-            title="Bookmarks are a Pro feature"
-            description="Annotate, pin, and export sessions across reconnects."
+            title={t('consolePage.bookmarksProTitle')}
+            description={t('consolePage.bookmarksProDesc')}
             onUnlock={() => setLockFeature('annotations')}
           />
         )}
@@ -272,17 +291,17 @@ export function ConsolePage() {
             isLicensed={triggersLicensed}
             disabledReason={
               !snapshot.connected
-                ? 'Connect to a panel before editing triggers.'
+                ? t('consolePage.triggersDisabledDisconnected')
                 : !snapshot.activeProfileName
-                  ? 'Triggers persist per connection profile. Load a saved profile to keep rules across sessions.'
+                  ? t('consolePage.triggersDisabledNoProfile')
                   : undefined
             }
           />
         ) : (
           <FeatureGateEmptyState
             featureId="triggers"
-            title="Triggers are a Pro feature"
-            description="Run rules when log lines match. Highlight, mute, alert."
+            title={t('consolePage.triggersProTitle')}
+            description={t('consolePage.triggersProDesc')}
             onUnlock={() => setLockFeature('triggers')}
           />
         )}
@@ -293,8 +312,8 @@ export function ConsolePage() {
         ) : (
           <FeatureGateEmptyState
             featureId="macros"
-            title="Macros are a Pro feature"
-            description="Bundle commands into one-shot shortcuts."
+            title={t('consolePage.macrosProTitle')}
+            description={t('consolePage.macrosProDesc')}
             onUnlock={() => setLockFeature('macros')}
           />
         )}
@@ -377,7 +396,7 @@ export function ConsolePage() {
         onToggleSidebar={toggleSidebar}
         onToggleTopologyRail={openTopologyRail}
         onClearLogs={() => controller.clearLogs()}
-        onSelectTopId={filterById}
+        onExportLogs={() => { void handleExportLogs(); }}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -441,12 +460,12 @@ export function ConsolePage() {
           <Search className="text-muted-foreground pointer-events-none absolute left-2 size-3.5" aria-hidden />
           <Input
             type="search"
-            placeholder="Filter id, label, state"
+            placeholder={t('topology.filterPlaceholder')}
             value={topologyFilter}
             onChange={(event) => setTopologyFilter(event.target.value)}
             spellCheck={false}
             className="h-7 pl-7 font-mono text-xs"
-            aria-label="Filter topology"
+            aria-label={t('topology.filterAria')}
           />
         </div>
         {wide && (
@@ -458,12 +477,12 @@ export function ConsolePage() {
                 size="sm"
                 className="text-muted-foreground hover:text-foreground h-7 w-7 shrink-0 p-0"
                 onClick={closeTopologyRail}
-                aria-label="Hide devices rail"
+                aria-label={t('topology.hideAria')}
               >
                 <PanelRightClose className="size-4" aria-hidden />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Hide rail</TooltipContent>
+            <TooltipContent>{t('topology.hideTooltip')}</TooltipContent>
           </Tooltip>
         )}
       </div>
@@ -488,7 +507,7 @@ export function ConsolePage() {
   const sheetRail = !wide && (
     <Sheet open={railSheetOpen} onOpenChange={setRailSheetOpen}>
       <SheetContent side="right" className="w-[88vw] max-w-sm gap-0 p-0">
-        <SheetTitle className="sr-only">Devices</SheetTitle>
+        <SheetTitle className="sr-only">{t('consolePage.sheetDevicesTitle')}</SheetTitle>
         {activitySidebar}
       </SheetContent>
     </Sheet>

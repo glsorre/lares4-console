@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -27,6 +28,7 @@ function resolveDark(mode: ThemeMode): boolean {
 }
 
 export function ThemeToggle() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<ThemeMode>(() => {
     const initial = readStoredTheme() ?? 'system';
     const dark = resolveDark(initial);
@@ -72,10 +74,10 @@ export function ThemeToggle() {
 
   const label =
     mode === 'system'
-      ? 'Theme: system (click for light)'
+      ? t('theme.systemHint')
       : mode === 'dark'
-        ? 'Theme: dark (click for system)'
-        : 'Theme: light (click for dark)';
+        ? t('theme.darkHint')
+        : t('theme.lightHint');
 
   return (
     <Button

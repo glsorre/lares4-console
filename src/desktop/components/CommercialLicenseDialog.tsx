@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
-  FEATURES,
   getFeatureLicense,
   getFeatureLicensePayload,
   getBundleRaw,
@@ -34,8 +34,8 @@ interface CommercialLicenseDialogProps {
   onChanged?: () => void;
 }
 
-function formatExp(exp: number | undefined): string {
-  if (exp === undefined) return 'perpetual';
+function formatExpDate(exp: number | undefined): string | null {
+  if (exp === undefined) return null;
   try {
     return new Date(exp * 1000).toISOString().slice(0, 10);
   } catch {
@@ -44,7 +44,7 @@ function formatExp(exp: number | undefined): string {
 }
 
 export function CommercialLicenseDialog({ open, onOpenChange, featureId, onChanged }: CommercialLicenseDialogProps) {
-  const descriptor = FEATURES[featureId];
+  const { t } = useTranslation();
   const [key, setKey] = useState('');
   const [error, setError] = useState<VerifyFailureReason | null>(null);
   const [pending, setPending] = useState(false);
@@ -89,24 +89,30 @@ export function CommercialLicenseDialog({ open, onOpenChange, featureId, onChang
     onOpenChange(false);
   }
 
+  const errorMsg = error ? (() => {
+    const { key: tKey, params } = verifyFailureMessage(error);
+    return t(tKey, params);
+  })() : null;
+  const expFormatted = activePayload ? formatExpDate(activePayload.exp) : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{descriptor.title}</DialogTitle>
-          <DialogDescription>{descriptor.description}</DialogDescription>
+          <DialogTitle>{t(`license.feature.${featureId}.title`)}</DialogTitle>
+          <DialogDescription>{t(`license.feature.${featureId}.description`)}</DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
           <div className="space-y-1">
             <Label htmlFor={`lic-key-${featureId}`} className="text-xs text-muted-foreground">
-              License key
+              {t('license.dialog.keyLabel')}
             </Label>
             <Input
               id={`lic-key-${featureId}`}
               className="h-8 font-mono text-xs"
               autoFocus
               value={key}
-              placeholder="LARES4-..."
+              placeholder={t('license.dialog.keyPlaceholder')}
               spellCheck={false}
               autoComplete="off"
               onChange={(e) => {
@@ -115,27 +121,27 @@ export function CommercialLicenseDialog({ open, onOpenChange, featureId, onChang
               }}
             />
             <p className="text-muted-foreground text-[0.65rem]">
-              Stored locally. Verified offline via Ed25519 signature — no network call.
+              {t('license.dialog.keyNote')}
             </p>
           </div>
-          {error && (
+          {errorMsg && (
             <Alert variant="destructive">
-              <AlertDescription>{verifyFailureMessage(error)}</AlertDescription>
+              <AlertDescription>{errorMsg}</AlertDescription>
             </Alert>
           )}
-          {activePayload && !error && (
+          {activePayload && !errorMsg && (
             <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Licensed to</span>
-                <span className="font-mono">{activePayload.sub || '—'}</span>
+                <span className="text-muted-foreground">{t('license.dialog.licensedTo')}</span>
+                <span className="font-mono">{activePayload.sub || t('common.dash')}</span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Scope</span>
-                <span className="font-mono">{activePayload.f === '*' ? 'all features (bundle)' : activePayload.f}</span>
+                <span className="text-muted-foreground">{t('license.dialog.scope')}</span>
+                <span className="font-mono">{activePayload.f === '*' ? t('license.dialog.scopeAll') : activePayload.f}</span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Expires</span>
-                <span className="font-mono">{formatExp(activePayload.exp)}</span>
+                <span className="text-muted-foreground">{t('license.dialog.expires')}</span>
+                <span className="font-mono">{expFormatted ?? t('license.dialog.expPerpetual')}</span>
               </div>
             </div>
           )}
@@ -143,18 +149,18 @@ export function CommercialLicenseDialog({ open, onOpenChange, featureId, onChang
         <DialogFooter>
           {storedRaw !== null && (
             <Button type="button" variant="outline" onClick={clear} disabled={pending}>
-              Clear
+              {t('license.dialog.clear')}
             </Button>
           )}
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             type="button"
             disabled={pending || trimmed.length === 0 || trimmed === storedRaw}
             onClick={save}
           >
-            {pending ? 'Verifying…' : 'Save'}
+            {pending ? t('license.dialog.saving') : t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

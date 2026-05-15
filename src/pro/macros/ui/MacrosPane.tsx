@@ -2,6 +2,7 @@
 // See LICENSE in this directory.
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Check, Circle, MoreHorizontal, Pause, Play, Plus, Square, Trash2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,6 +37,7 @@ interface MacrosPaneProps {
 }
 
 export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
+  const { t } = useTranslation();
   const { controller, snapshot } = useSessionController();
   const macros = snapshot.macros;
   const activeMacro = snapshot.activeMacro;
@@ -56,7 +58,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
         <CardContent className="flex flex-1 items-center justify-center px-4 py-6">
           <ProFeatureLock
             featureId="macros"
-            label="Macros"
+            label={t('pro.macros.label')}
             variant="row"
             onLicenseChanged={onLicenseChanged}
           />
@@ -88,7 +90,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
             onClick={openNew}
           >
             <Plus className="size-3.5" aria-hidden />
-            New
+            {t('pro.macros.new')}
           </Button>
         </div>
         {activeMacro && (
@@ -98,15 +100,15 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
             </span>
             <span className="flex items-center gap-0.5">
               {activeMacro.status === 'playing' ? (
-                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.pauseMacro()} aria-label="Pause macro">
+                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.pauseMacro()} aria-label={t('pro.macros.pauseMacro')}>
                   <Pause className="size-3.5" aria-hidden />
                 </Button>
               ) : activeMacro.position < activeMacro.total ? (
-                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.resumeMacro()} aria-label="Resume macro">
+                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.resumeMacro()} aria-label={t('pro.macros.resumeMacro')}>
                   <Play className="size-3.5" aria-hidden />
                 </Button>
               ) : null}
-              <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.stopMacro()} aria-label="Stop macro">
+              <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.stopMacro()} aria-label={t('pro.macros.stopMacro')}>
                 <Square className="size-3.5" aria-hidden />
               </Button>
             </span>
@@ -117,7 +119,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
           <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs">
             <span className="flex items-center gap-1.5">
               <Circle className="size-2.5 fill-current" aria-hidden />
-              Recording · {recordingSteps} step{recordingSteps === 1 ? '' : 's'}
+              {t('pro.macros.recordingSteps', { count: recordingSteps })}
             </span>
             <span className="flex items-center gap-0.5">
               <Button
@@ -129,7 +131,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                   setRecordingName('');
                   setRecordingNameOpen(true);
                 }}
-                aria-label="Stop recording"
+                aria-label={t('pro.macros.stopRecording')}
               >
                 <Check className="size-3.5" aria-hidden />
               </Button>
@@ -139,7 +141,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                 size="sm"
                 className="size-6 p-0"
                 onClick={() => controller.cancelRecordingMacro()}
-                aria-label="Cancel recording"
+                aria-label={t('pro.macros.cancelRecording')}
               >
                 <Trash2 className="size-3.5" aria-hidden />
               </Button>
@@ -151,11 +153,11 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
           {macros.length === 0 ? (
             <PaneEmpty
               icon={Zap}
-              title="No macros yet"
+              title={t('pro.macros.emptyTitle')}
               description={
                 connected
-                  ? 'Record a command sequence and replay it from the panel any time.'
-                  : 'Connect a panel from the sidebar to record and replay command sequences.'
+                  ? t('pro.macros.emptyDescConnected')
+                  : t('pro.macros.emptyDescDisconnected')
               }
             />
           ) : (
@@ -170,7 +172,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                     )}>
                       <div className="min-w-0 flex-1">
                         <p className="text-foreground truncate text-sm font-medium leading-tight">{m.name}</p>
-                        <p className="text-muted-foreground text-xs">{m.steps.length} step{m.steps.length === 1 ? '' : 's'}</p>
+                        <p className="text-muted-foreground text-xs">{t('pro.macros.steps', { count: m.steps.length })}</p>
                       </div>
                       <Button
                         type="button"
@@ -179,22 +181,22 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                         className="size-7 p-0 text-muted-foreground hover:text-foreground"
                         onClick={() => controller.runMacro(m.id)}
                         disabled={isActive || !connected}
-                        aria-label={`Run ${m.name}`}
+                        aria-label={t('pro.macros.runAria', { name: m.name })}
                       >
                         <Play className="size-3.5" aria-hidden />
                       </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button type="button" variant="ghost" size="sm" className="size-7 p-0 opacity-50 hover:opacity-100" aria-label={`Options for ${m.name}`}>
+                          <Button type="button" variant="ghost" size="sm" className="size-7 p-0 opacity-50 hover:opacity-100" aria-label={t('pro.macros.optionsAria', { name: m.name })}>
                             <MoreHorizontal className="size-3.5" aria-hidden />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="text-xs">
-                          <DropdownMenuItem onSelect={() => openEdit(m)}>Edit</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openEdit(m)}>{t('pro.macros.edit')}</DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteMacroId(m.id)}>
                             <Trash2 className="size-3" aria-hidden />
-                            Delete
+                            {t('pro.macros.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -217,7 +219,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
               disabled={activeMacro !== undefined || !connected}
             >
               <Circle className="size-3" aria-hidden />
-              Record
+              {t('pro.macros.record')}
             </Button>
           </div>
         )}
@@ -233,25 +235,25 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
       <Dialog open={recordingNameOpen} onOpenChange={(open) => { if (!open) setRecordingNameOpen(false); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Save recorded macro</DialogTitle>
+            <DialogTitle>{t('pro.macros.saveRecTitle')}</DialogTitle>
             <DialogDescription>
-              Captured {recordingSteps} step{recordingSteps === 1 ? '' : 's'}.
+              {t('pro.macros.saveRecDesc', { count: recordingSteps })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1">
-            <Label htmlFor="rec-name" className="text-xs text-muted-foreground">Name</Label>
+            <Label htmlFor="rec-name" className="text-xs text-muted-foreground">{t('pro.macros.name')}</Label>
             <Input
               id="rec-name"
               className="h-8 text-xs"
               autoFocus
               value={recordingName}
               onChange={(e) => setRecordingName(e.target.value)}
-              placeholder="evening"
+              placeholder={t('pro.macros.recNamePlaceholder')}
             />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => { controller.cancelRecordingMacro(); setRecordingNameOpen(false); }}>
-              Discard
+              {t('pro.macros.discard')}
             </Button>
             <Button
               type="button"
@@ -261,7 +263,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                 setRecordingNameOpen(false);
               }}
             >
-              Save
+              {t('pro.macros.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -270,11 +272,11 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
       <Dialog open={deleteMacroId !== null} onOpenChange={(open) => { if (!open) setDeleteMacroId(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete macro?</DialogTitle>
-            <DialogDescription>This cannot be undone.</DialogDescription>
+            <DialogTitle>{t('pro.macros.deleteTitle')}</DialogTitle>
+            <DialogDescription>{t('pro.macros.deleteDesc')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteMacroId(null)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => setDeleteMacroId(null)}>{t('pro.macros.cancel')}</Button>
             <Button
               type="button"
               variant="destructive"
@@ -283,7 +285,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                 setDeleteMacroId(null);
               }}
             >
-              Delete
+              {t('pro.macros.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

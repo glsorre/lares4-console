@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Bell, Pause, Plus, Trash2, Volume2, Zap } from 'lucide-react';
 import {
   Dialog,
@@ -33,19 +34,19 @@ interface TriggersDialogProps {
   isLicensed: boolean;
 }
 
-const COLORS: Array<{ value: HighlightColor; label: string; swatch: string }> = [
-  { value: 'red', label: 'Red', swatch: 'bg-red-500' },
-  { value: 'amber', label: 'Amber', swatch: 'bg-amber-500' },
-  { value: 'emerald', label: 'Emerald', swatch: 'bg-emerald-500' },
-  { value: 'blue', label: 'Blue', swatch: 'bg-blue-500' },
-  { value: 'violet', label: 'Violet', swatch: 'bg-violet-500' },
+const COLORS: Array<{ value: HighlightColor; labelKey: string; swatch: string }> = [
+  { value: 'red', labelKey: 'pro.triggers.color.red', swatch: 'bg-red-500' },
+  { value: 'amber', labelKey: 'pro.triggers.color.amber', swatch: 'bg-amber-500' },
+  { value: 'emerald', labelKey: 'pro.triggers.color.emerald', swatch: 'bg-emerald-500' },
+  { value: 'blue', labelKey: 'pro.triggers.color.blue', swatch: 'bg-blue-500' },
+  { value: 'violet', labelKey: 'pro.triggers.color.violet', swatch: 'bg-violet-500' },
 ];
 
-const ACTION_OPTIONS: Array<{ kind: TriggerActionKind; label: string; icon: typeof Zap }> = [
-  { kind: 'highlight', label: 'Highlight', icon: Zap },
-  { kind: 'beep', label: 'Beep', icon: Volume2 },
-  { kind: 'notify', label: 'Notify', icon: Bell },
-  { kind: 'pause', label: 'Pause stream', icon: Pause },
+const ACTION_OPTIONS: Array<{ kind: TriggerActionKind; labelKey: string; icon: typeof Zap }> = [
+  { kind: 'highlight', labelKey: 'pro.triggers.action.highlight', icon: Zap },
+  { kind: 'beep', labelKey: 'pro.triggers.action.beep', icon: Volume2 },
+  { kind: 'notify', labelKey: 'pro.triggers.action.notify', icon: Bell },
+  { kind: 'pause', labelKey: 'pro.triggers.action.pause', icon: Pause },
 ];
 
 function generateId(): string {
@@ -55,6 +56,7 @@ function generateId(): string {
 }
 
 export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledReason, isLicensed }: TriggersDialogProps) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState<TriggerRule[]>(triggers);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -68,13 +70,13 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
 
   const validation = useMemo(() => {
     for (const rule of draft) {
-      if (!rule.name.trim()) return `Rule needs a name.`;
+      if (!rule.name.trim()) return t('pro.triggers.validation.nameRequired');
       const v = validateTriggerMatch(rule.match);
-      if (!v.ok) return `Rule "${rule.name}": ${v.error}`;
-      if (rule.actions.length === 0) return `Rule "${rule.name}" needs at least one action.`;
+      if (!v.ok) return t('pro.triggers.validation.matchError', { name: rule.name, error: v.error });
+      if (rule.actions.length === 0) return t('pro.triggers.validation.actionRequired', { name: rule.name });
     }
     return undefined;
-  }, [draft]);
+  }, [draft, t]);
 
   function updateRule(id: string, patch: Partial<TriggerRule>) {
     setDraft((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -137,18 +139,17 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Trigger rules</DialogTitle>
+          <DialogTitle>{t('pro.triggers.dialog.title')}</DialogTitle>
           <DialogDescription>
-            Match log entries with the query DSL
-            (<span className="font-mono text-xs">tag:ACK id:42 cmd:LIGHTS</span>)
-            and fire actions on each match.
+            {t('pro.triggers.dialog.descPrefix')}
+            <span className="font-mono text-xs">{t('pro.triggers.dialog.descDslExample')}</span>
+            {t('pro.triggers.dialog.descSuffix')}
           </DialogDescription>
         </DialogHeader>
         {readOnly && (
           <Alert>
             <AlertDescription className="text-xs">
-              Triggers are a commercial feature. Stored rules are shown below in read-only mode;
-              live evaluation is paused. Unlock to edit and run them.
+              {t('pro.triggers.proNotice')}
             </AlertDescription>
           </Alert>
         )}
@@ -160,7 +161,7 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
         <ScrollArea className="max-h-[55vh] pr-3">
           {draft.length === 0 ? (
             <div className="text-muted-foreground rounded-md border border-dashed py-8 text-center text-sm">
-              No rules yet. {readOnly ? 'Unlock to add rules.' : 'Add one to react when a log entry matches.'}
+              {readOnly ? t('pro.triggers.dialog.emptyReadOnly') : t('pro.triggers.dialog.emptyEditable')}
             </div>
           ) : (
             <ul className="flex flex-col gap-3">
@@ -170,13 +171,13 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
                     <Checkbox
                       checked={rule.enabled}
                       onCheckedChange={(v) => updateRule(rule.id, { enabled: v === true })}
-                      aria-label="Enable rule"
+                      aria-label={t('pro.triggers.enableRule')}
                       disabled={readOnly}
                     />
                     <Input
                       value={rule.name}
                       onChange={(event) => updateRule(rule.id, { name: event.target.value })}
-                      placeholder="Rule name"
+                      placeholder={t('pro.triggers.ruleNamePlaceholder')}
                       className="h-7 max-w-[14rem] text-sm"
                       readOnly={readOnly}
                     />
@@ -188,8 +189,8 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
                         size="sm"
                         className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
                         onClick={() => removeRule(rule.id)}
-                        aria-label="Remove rule"
-                        title="Remove rule"
+                        aria-label={t('pro.triggers.removeRule')}
+                        title={t('pro.triggers.removeRule')}
                       >
                         <Trash2 className="size-3.5" aria-hidden />
                       </Button>
@@ -197,18 +198,18 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
                   </div>
                   <div className="mt-2 grid gap-2">
                     <div>
-                      <Label className="text-muted-foreground text-xs">Match</Label>
+                      <Label className="text-muted-foreground text-xs">{t('pro.triggers.matchLabel')}</Label>
                       <Input
                         value={rule.match}
                         onChange={(event) => updateRule(rule.id, { match: event.target.value })}
-                        placeholder="tag:ACK level:error"
+                        placeholder={t('pro.triggers.matchPlaceholder')}
                         className="h-7 font-mono text-xs"
                         spellCheck={false}
                         readOnly={readOnly}
                       />
                     </div>
                     <div>
-                      <Label className="text-muted-foreground text-xs">Actions</Label>
+                      <Label className="text-muted-foreground text-xs">{t('pro.triggers.actionsLabel')}</Label>
                       <div className="mt-1 flex flex-wrap gap-1.5">
                         {ACTION_OPTIONS.map((opt) => {
                           const active = rule.actions.some((a) => a.kind === opt.kind);
@@ -229,25 +230,26 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
                               )}
                             >
                               <Icon className="size-3" aria-hidden />
-                              {opt.label}
+                              {t(opt.labelKey)}
                             </button>
                           );
                         })}
                       </div>
                       {rule.actions.some((a) => a.kind === 'highlight') && (
                         <div className="mt-2 flex items-center gap-1.5">
-                          <span className="text-muted-foreground text-xs">Color</span>
+                          <span className="text-muted-foreground text-xs">{t('pro.triggers.colorLabel')}</span>
                           {COLORS.map((c) => {
                             const current = rule.actions.find((a) => a.kind === 'highlight')?.color ?? 'amber';
                             const active = current === c.value;
+                            const colorLabel = t(c.labelKey);
                             return (
                               <button
                                 key={c.value}
                                 type="button"
                                 onClick={() => !readOnly && setHighlightColor(rule.id, c.value)}
-                                aria-label={`Highlight ${c.label}`}
+                                aria-label={t('pro.triggers.highlightAria', { color: colorLabel })}
                                 aria-pressed={active}
-                                title={c.label}
+                                title={colorLabel}
                                 disabled={readOnly && !active}
                                 className={cn(
                                   'size-5 rounded-full border-2 transition-transform',
@@ -271,7 +273,7 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
           {!readOnly ? (
             <Button type="button" variant="outline" size="sm" onClick={addRule} className="gap-1.5">
               <Plus className="size-3.5" aria-hidden />
-              Add rule
+              {t('pro.triggers.addRule')}
             </Button>
           ) : <span />}
           {validation && !readOnly && (
@@ -280,16 +282,16 @@ export function TriggersDialog({ open, onOpenChange, triggers, onSave, disabledR
         </div>
         {error && <span className="text-destructive text-xs" role="alert">{error}</span>}
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{t('pro.triggers.dialog.close')}</Button>
           {readOnly ? (
-            <ProFeatureLock featureId="triggers" label="Unlock to edit" />
+            <ProFeatureLock featureId="triggers" label={t('pro.triggers.unlockToEdit')} />
           ) : (
             <Button
               type="button"
               disabled={saving || !!validation || !!disabledReason}
               onClick={() => void handleSave()}
             >
-              {saving ? 'Saving…' : 'Save rules'}
+              {saving ? t('pro.triggers.saving') : t('pro.triggers.saveRules')}
             </Button>
           )}
         </DialogFooter>

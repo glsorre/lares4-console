@@ -19,7 +19,6 @@ describe('log-stats', () => {
     assert.equal(s.totalEvents, 0);
     assert.equal(s.totalErrors, 0);
     assert.equal(s.eventsPerSecond, 0);
-    assert.deepEqual(s.topIds, []);
   });
 
   it('tag tallies + errors', () => {
@@ -50,23 +49,4 @@ describe('log-stats', () => {
     assert.equal(s.eventsPerSecond, 0.6);
   });
 
-  it('topIds extracted from payload', () => {
-    const items = [
-      entry({ payload: { CMD: 'LIGHTS', PAYLOAD: { LIGHTS: [{ ID: 1, STA: 'ON' }] } } }),
-      entry({ payload: { CMD: 'LIGHTS', PAYLOAD: { LIGHTS: [{ ID: 1, STA: 'OFF' }] } } }),
-      entry({ payload: { CMD: 'LIGHTS', PAYLOAD: { LIGHTS: [{ ID: 2, STA: 'ON' }] } } }),
-    ];
-    const s = computeLogStats(items, { topIdsLimit: 3 });
-    assert.deepEqual(s.topIds, [
-      { id: '1', count: 2 },
-      { id: '2', count: 1 },
-    ]);
-  });
-
-  it('topIdsLimit respected', () => {
-    const items = Array.from({ length: 10 }, (_, i) =>
-      entry({ payload: { ID: i } }));
-    const s = computeLogStats(items, { topIdsLimit: 3 });
-    assert.equal(s.topIds.length, 3);
-  });
 });

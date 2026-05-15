@@ -112,7 +112,7 @@ describe('SessionController read-only', () => {
     });
     await c.connect({ ip: '1', pin: '2', sender: 's', wss: true });
     setReadOnlyMode(true);
-    await c.submit('format json');
+    c.setOutputFormat('json');
     assert.equal(c.snapshot().outputFormat, 'json');
     await c.submit('help');
     const logs = c.snapshot().logEntries.filter((e) => e.tag === 'LOG');

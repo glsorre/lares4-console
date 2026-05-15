@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Command,
   CommandEmpty,
@@ -48,11 +49,13 @@ export function AutocompleteList({
   activeIndex,
   onActiveChange,
   onPick,
-  emptyText = 'No suggestions.',
+  emptyText,
   className,
   itemClassName,
   id,
 }: AutocompleteListProps) {
+  const { t } = useTranslation();
+  const resolvedEmpty = emptyText ?? t('autocomplete.noSuggestions');
   const flat = flattenGroups(groups);
   const selectedValue = activeIndex >= 0 && activeIndex < flat.length ? `i-${activeIndex}` : '';
 
@@ -74,7 +77,7 @@ export function AutocompleteList({
     >
       <CommandList>
         {flat.length === 0 ? (
-          <CommandEmpty>{emptyText}</CommandEmpty>
+          <CommandEmpty>{resolvedEmpty}</CommandEmpty>
         ) : (
           (() => {
             let cursor = 0;

@@ -1,9 +1,5 @@
 export const ROOT_COMMANDS = [
   'help',
-  'exit',
-  'quit',
-  'format',
-  'events',
   'state',
   'lights',
   'covers',
@@ -14,9 +10,6 @@ export const ROOT_COMMANDS = [
   'thermostats',
   'scenario',
   'raw',
-  'record',
-  'replay',
-  'export',
 ] as const;
 
 export const STATE_SCOPES = [
@@ -35,8 +28,6 @@ export const STATE_SCOPES = [
 export const EVENT_FILTERS = ['acks', 'errors', 'multitypes', 'raw', 'changes', 'sent'] as const;
 
 export const SECONDARY_COMMANDS: Record<string, string[]> = {
-  format: ['pretty', 'json'],
-  events: ['none', 'all', ...EVENT_FILTERS],
   state: [...STATE_SCOPES],
   lights: ['on', 'off', 'dim'],
   covers: ['up', 'down', 'stop', 'to'],
@@ -46,17 +37,12 @@ export const SECONDARY_COMMANDS: Record<string, string[]> = {
   gates: ['open', 'close', 'stop', 'status'],
   thermostats: ['mode', 'setpoint', 'fan', 'status'],
   scenario: ['trigger'],
-  raw: ['send', 'sendcmd', 'full'],
-  record: ['start', 'stop'],
-  replay: ['load', 'play', 'pause', 'step', 'speed', 'stop'],
+  raw: ['send', 'sendcmd'],
 };
 
 export const COMMAND_HELP_LINES = [
   'Commands:',
   '  help',
-  '  exit | quit',
-  '  format pretty|json',
-  `  events none|all|${EVENT_FILTERS.join(',')}`,
   `  state ${STATE_SCOPES.join('|')}`,
   '  lights on|off|dim <id> [level]',
   '  covers up|down|stop|to <id> [position]',
@@ -68,9 +54,4 @@ export const COMMAND_HELP_LINES = [
   '  scenario trigger <id>',
   '  raw send <CMD> <PAYLOAD_TYPE> <JSON_PAYLOAD>',
   '  raw sendcmd <JSON_COMMAND>',
-  '  raw full on|off',
-  '  record start [path] | record stop',
-  '  replay load <path> | replay play|pause|step|speed <n>|stop',
-  '  export [path]',
 ] as const;
-

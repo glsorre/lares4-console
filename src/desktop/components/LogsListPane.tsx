@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 import {
   Activity,
   AlertTriangle,
@@ -29,6 +30,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { LogTagChip } from './LogTagChip.js';
+import { RowChip } from './RowChip.js';
 import { ackResultChipClasses } from '../runtime/status-chips.js';
 
 const TAIL_THRESHOLD_PX = 24;
@@ -47,6 +49,12 @@ function getTagIcon(tag: LogTag): IconComp {
     case 'SYSTEM': return Info;
     default:       return Info;
   }
+}
+
+const DECODED_WITH_WIRE: ReadonlySet<LogTag> = new Set<LogTag>(['CHANGE', 'BULK', 'LOG']);
+
+function pairedWithWire(item: ReturnType<typeof buildMessageListItems>[number]): boolean {
+  return !!item.wireFrame && DECODED_WITH_WIRE.has(item.tag);
 }
 
 interface LogsListPaneProps {
@@ -74,6 +82,7 @@ export function LogsListPane({
   onPinnedIdChange,
   annotationsLicensed,
 }: LogsListPaneProps) {
+  const { t } = useTranslation();
   const { snapshot } = useSessionController();
   const connected = snapshot.connected;
   const [followTail, setFollowTail] = useState<boolean>(true);
@@ -114,11 +123,10 @@ export function LogsListPane({
     return buildMessageListItems(entries).find((it) => it.id === pinnedId);
   }, [entries, pinnedId]);
   const metaByGroupId = useMemo(() => {
-    const map = new Map<string, { latencyMs?: number; highlight?: LogEntry['highlight'] }>();
+    const map = new Map<string, { highlight?: LogEntry['highlight'] }>();
     for (const entry of entries) {
       if (!entry.groupId) continue;
       const existing = map.get(entry.groupId) ?? {};
-      if (entry.latencyMs !== undefined) existing.latencyMs = entry.latencyMs;
       if (entry.highlight !== undefined) existing.highlight = entry.highlight;
       map.set(entry.groupId, existing);
     }
@@ -175,13 +183,13 @@ export function LogsListPane({
         {items.length === 0 ? (
           <PaneEmpty
             icon={Terminal}
-            title={entries.length === 0 ? 'No messages yet' : 'No messages match search'}
+            title={entries.length === 0 ? t('logs.emptyTitle') : t('logs.noMatchTitle')}
             description={
               entries.length === 0
                 ? connected
-                  ? 'Send a command to see live responses, ACKs, and change events.'
-                  : 'Connect a panel from the sidebar to start streaming wire traffic.'
-                : 'Refine the query (source:, tag:, level:, id:, cmd:) or clear it.'
+                  ? t('logs.descNoEntriesConnected')
+                  : t('logs.descNoEntriesDisconnected')
+                : t('logs.descRefineQuery')
             }
           />
         ) : (
@@ -190,7 +198,7 @@ export function LogsListPane({
               id="lares4-log-list"
               className="flex flex-col gap-0.5 px-2 py-2 pb-4"
               role="listbox"
-              aria-label="Log messages"
+              aria-label={t('logs.listAriaLabel')}
               aria-activedescendant={selectedId ? `log-row-${selectedId}` : undefined}
               aria-keyshortcuts="ArrowUp ArrowDown PageUp PageDown Home End"
               tabIndex={0}
@@ -279,12 +287,12 @@ export function LogsListPane({
               {followTail ? (
                 <>
                   <Pause className="size-3.5" aria-hidden />
-                  Pause
+                  {t('logs.pause')}
                 </>
               ) : (
                 <>
                   <ArrowDownToLine className="size-3.5" aria-hidden />
-                  Jump to live
+                  {t('logs.jumpToLive')}
                 </>
               )}
             </Button>
@@ -301,7 +309,7 @@ interface RowProps {
   bookmarked: boolean;
   pinned: boolean;
   rowIdPrefix: string;
-  meta?: { latencyMs?: number; highlight?: LogEntry['highlight'] };
+  meta?: { highlight?: LogEntry['highlight'] };
   annotationsLicensed: boolean;
   searchTerms: string[];
   searchMatch?: boolean;
@@ -352,8 +360,11 @@ function Row({
   expanded, onToggleExpand,
   onSelect, onToggleBookmark, onTogglePin,
 }: RowProps) {
+  const { t } = useTranslation();
   const isError = item.tag === 'ERROR';
-  const Icon = getTagIcon(item.tag);
+  const isPairedWithWire = pairedWithWire(item);
+  const primaryTag: LogTag = isPairedWithWire ? 'RAW_RX' : item.tag;
+  const Icon = getTagIcon(primaryTag);
   const highlightCls = meta?.highlight ? HIGHLIGHT_BG[meta.highlight] : undefined;
   const hasSearch = searchTerms.length > 0;
   const isMatch = hasSearch && searchMatch === true;
@@ -392,7 +403,7 @@ function Row({
       }}
     >
       <Icon className="size-3.5 text-muted-foreground shrink-0" aria-hidden />
-      <LogTagChip tag={item.tag} />
+      <LogTagChip tag={primaryTag} />
       <span className="text-muted-foreground font-mono text-meta tabular-nums opacity-70">
         {formatLogClock(item.ts)}
       </span>
@@ -406,7 +417,7 @@ function Row({
         {hasChildren && onToggleExpand && (
           <button
             type="button"
-            aria-label={expanded ? 'Collapse items' : 'Expand items'}
+            aria-label={expanded ? t('logs.collapseAria') : t('logs.expandAria')}
             aria-expanded={expanded}
             className="text-muted-foreground hover:text-foreground mr-1 shrink-0 rounded p-0.5"
             onClick={(event) => {
@@ -420,29 +431,24 @@ function Row({
         <span className="min-w-0 truncate">
           {hasSearch ? highlightFragment(item.preview, searchTerms) : item.preview}
           {item.repeat !== undefined && item.repeat > 1 && (
-            <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">×{item.repeat}</span>
+            <span className="text-muted-foreground ml-1.5 font-mono text-meta tabular-nums">{t('logs.row.repeat', { n: item.repeat })}</span>
           )}
         </span>
       </span>
       <div className="flex shrink-0 items-center">
         {item.ack ? (
-          <span
-            className={cn(
-              'shrink-0 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.7rem] uppercase tracking-wide leading-tight tabular-nums',
-              ackResultChipClasses(item.ack.result),
-            )}
-            title={`ACK ${item.ack.result ?? ''}${item.ack.latencyMs !== undefined ? ` · ${item.ack.latencyMs}ms` : ''}`.trim()}
+          <RowChip
+            className={ackResultChipClasses(item.ack.result)}
+            title={`${t('logs.row.ackTitlePrefix')} ${item.ack.result ?? ''}`.trim()}
           >
-            <span className="font-semibold">{item.ack.result ?? 'ACK'}</span>
-            {item.ack.latencyMs !== undefined && <span className="font-normal">{item.ack.latencyMs}ms</span>}
-          </span>
-        ) : meta?.latencyMs !== undefined ? (
-          <span
-            className="bg-muted/70 text-muted-foreground border-border/50 shrink-0 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[0.7rem] uppercase tracking-wide leading-tight tabular-nums"
-            title="Round-trip latency"
-          >
-            {meta.latencyMs}ms
-          </span>
+            <span className="font-semibold">{item.ack.result ?? t('logs.row.ackLabel')}</span>
+          </RowChip>
+        ) : isPairedWithWire ? (
+          <LogTagChip
+            tag={item.tag}
+            title={t('logs.row.wireChipTitle')}
+            aria-label={t('logs.row.wireChipAria')}
+          />
         ) : null}
       </div>
       <div
@@ -459,7 +465,7 @@ function Row({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={pinned ? 'Unpin row' : 'Pin row to top'}
+                  aria-label={pinned ? t('logs.row.unpinAria') : t('logs.row.pinAria')}
                   aria-pressed={pinned}
                   className={cn(
                     'rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted',
@@ -473,13 +479,13 @@ function Row({
                   <Pin className="size-3.5" aria-hidden />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>{pinned ? 'Unpin row' : 'Pin to top'}</TooltipContent>
+              <TooltipContent>{pinned ? t('logs.row.unpinTooltip') : t('logs.row.pinTooltip')}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark row'}
+                  aria-label={bookmarked ? t('logs.row.unbookmarkAria') : t('logs.row.bookmarkAria')}
                   aria-pressed={bookmarked}
                   className={cn(
                     'rounded p-1 text-muted-foreground hover:text-foreground hover:bg-muted',
@@ -493,15 +499,15 @@ function Row({
                   <Star className={cn('size-3.5', bookmarked && 'fill-current')} aria-hidden />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>{bookmarked ? 'Remove bookmark' : 'Bookmark'}</TooltipContent>
+              <TooltipContent>{bookmarked ? t('logs.row.unbookmarkTooltip') : t('logs.row.bookmarkTooltip')}</TooltipContent>
             </Tooltip>
           </>
         ) : (
           <ProFeatureLock
             featureId="annotations"
-            label="Pin & bookmarks"
+            label={t('logs.row.annotationsLockLabel')}
             variant="icon"
-            tooltip="Pin & bookmarks — unlock annotations"
+            tooltip={t('logs.row.annotationsLockTooltip')}
             className="size-7"
           />
         )}

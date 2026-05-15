@@ -1,12 +1,14 @@
 import { useEffect, useReducer, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Radio, Terminal } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AboutDialog } from './components/AboutDialog.js';
 import { ThemeToggle } from './components/theme-toggle.js';
+import { LanguageToggle } from './components/LanguageToggle.js';
 import { ReadOnlyToggle } from './components/ReadOnlyToggle.js';
 import { UpdateBanner } from './components/UpdateBanner.js';
 import { NewWindowButton } from '@pro/windows/ui/NewWindowButton.js';
@@ -17,13 +19,8 @@ import {
   runCheck,
   type UpdaterState,
 } from './runtime/updater.js';
-import { formatConnectionLabel } from './runtime/connection-label.js';
-import {
-  connectionChipClasses,
-  formatReplayLabel,
-  replayChipClasses,
-  replayPhase,
-} from './runtime/status-chips.js';
+import { connectionLabelKey, formatConnectionLabel } from './runtime/connection-label.js';
+import { connectionChipClasses } from './runtime/status-chips.js';
 import { BASE } from './runtime/motion-presets.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { TabsStrip } from '@pro/tabs/ui/TabsStrip.js';
@@ -34,11 +31,35 @@ export type LayoutOutletContext = {
 };
 
 export function AppLayout() {
+  const { t, i18n } = useTranslation();
   const { snapshot } = useSessionController();
   const location = useLocation();
   const navigate = useNavigate();
   const isMainWindow = useIsMainWindow();
   const isConsole = location.pathname === '/console';
+
+  const connectionLabel = (() => {
+    const key = connectionLabelKey(snapshot.connectionStatus);
+    return key ? t(key) : formatConnectionLabel(snapshot.connectionStatus);
+  })();
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = i18n.language;
+    }
+    const onChange = (lng: string) => {
+      if (typeof document !== 'undefined') document.documentElement.lang = lng;
+      void (async () => {
+        try {
+          const mod = await import('@tauri-apps/api/window');
+          await mod.getCurrentWindow().setTitle(t('app.windowTitle'));
+        } catch { /* not in Tauri */ }
+      })();
+    };
+    i18n.on('languageChanged', onChange);
+    onChange(i18n.language);
+    return () => { i18n.off('languageChanged', onChange); };
+  }, [i18n, t]);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -125,8 +146,6 @@ export function AppLayout() {
   }, []);
 
   const connClasses = connectionChipClasses(snapshot.connectionStatus);
-  const replayClasses = replayChipClasses(snapshot.replayStatus);
-  const replayLoaded = replayPhase(snapshot.replayStatus) !== 'off';
   const reduceMotion = useReducedMotion();
   const enter = reduceMotion
     ? { initial: false, animate: { opacity: 1, y: 0 }, transition: { duration: 0 } }
@@ -144,7 +163,7 @@ export function AppLayout() {
         href="#main-content"
         className="sr-only focus:not-sr-only focus:bg-background focus:text-foreground focus:ring-ring focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:px-3 focus:py-2 focus:text-sm focus:ring-2 focus:outline-none"
       >
-        Skip to main content
+        {t('app.skipToMain')}
       </a>
 
       <motion.header
@@ -157,7 +176,7 @@ export function AppLayout() {
             <Terminal className="size-3.5" aria-hidden />
           </div>
           <span className="font-heading text-foreground hidden text-sm font-semibold tracking-tight sm:block">
-            Lares4 Console
+            {t('app.brand')}
           </span>
         </div>
 
@@ -170,29 +189,17 @@ export function AppLayout() {
               'inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80',
               connClasses,
             )}
-            aria-label={`Connection: ${formatConnectionLabel(snapshot.connectionStatus)}. Click to toggle panel.`}
+            aria-label={t('app.connectionAria', { label: connectionLabel })}
             aria-pressed={sidebarOpen}
           >
-            <span className="truncate">{formatConnectionLabel(snapshot.connectionStatus)}</span>
+            <span className="truncate">{connectionLabel}</span>
           </button>
-          {replayLoaded ? (
-            <div
-              className={cn(
-                'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
-                replayClasses,
-              )}
-              aria-label={`Replay: ${formatReplayLabel(snapshot.replayStatus)}`}
-            >
-              <Radio className="size-3 shrink-0 opacity-70" aria-hidden />
-              <span className="font-mono truncate">{formatReplayLabel(snapshot.replayStatus)}</span>
-            </div>
-          ) : null}
           {snapshot.readOnly ? (
             <div
               className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-100/70 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-              aria-label="Read-only mode active — device commands are blocked"
+              aria-label={t('app.readOnlyAria')}
             >
-              <span className="truncate">Read-only</span>
+              <span className="truncate">{t('app.readOnlyLabel')}</span>
             </div>
           ) : null}
         </div>
@@ -201,6 +208,7 @@ export function AppLayout() {
         <div className="flex shrink-0 items-center gap-1.5">
           <NewWindowButton />
           <ReadOnlyToggle />
+          <LanguageToggle />
           <ThemeToggle />
         </div>
       </motion.header>

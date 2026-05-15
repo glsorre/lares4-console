@@ -3,6 +3,9 @@ import type { LogEntry, LogSource, LogTag } from './types.js';
 
 const MERGEABLE_TAGS: ReadonlySet<LogTag> = new Set(['CHANGE', 'BULK', 'RAW_RX', 'ACK']);
 
+/** Tags that represent a decoded view of a wire frame; preferred over RAW_RX when both share a groupId. */
+const SEMANTIC_TAGS: ReadonlySet<LogTag> = new Set(['CHANGE', 'BULK', 'LOG']);
+
 export interface LogViewport {
   start: number;
   end: number;
@@ -31,12 +34,20 @@ export interface MessageListItem {
   content: string;
   payload?: unknown;
   repeat?: number;
+  /** Shared cookie linking a TX with its matching ACK; surfaced for pair-aware UI. */
+  correlationId?: string;
   /** Correlated ACK metadata when this is a RAW_TX block whose response has arrived. */
   ack?: {
     result?: string;
     latencyMs?: number;
     payload?: unknown;
     ts?: string;
+  };
+  /** Raw wire frame paired with a decoded entry (CHANGE / BULK / LOG) sharing this group's id. */
+  wireFrame?: {
+    payload?: unknown;
+    content: string;
+    ts: string;
   };
   /** Nested entries for CHANGE / BULK frames carrying multiple state items. */
   children?: ChangeChild[];
@@ -54,6 +65,18 @@ export interface MergedFrame {
   ts: string;
   payload?: unknown;
   content: string;
+}
+
+function unwrapSenderWrapper(obj: Record<string, unknown>): Record<string, unknown> {
+  const entries = Object.entries(obj);
+  if (entries.length !== 1) return obj;
+  const [, val] = entries[0]!;
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return obj;
+  const inner = val as Record<string, unknown>;
+  const innerHasContainers = Object.values(inner).some(
+    (v) => v !== null && typeof v === 'object',
+  );
+  return innerHasContainers ? inner : obj;
 }
 
 export function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart?: string; id?: string } | undefined {
@@ -76,59 +99,29 @@ export function topKeyAndId(obj: Record<string, unknown>): { key: string; idPart
 
 /**
  * For CHANGE/BULK frames, unwraps the sender-keyed wrapper (if any) and walks the
- * device-type map, returning a count + top-types summary plus a flat list of children
- * for inline expansion (e.g. `LIGHTS[1] STA=ON`).
+ * device-type map, returning a count summary plus one child per top-level type key
+ * for inline expansion.
  */
 export function extractChangeChildren(payload: unknown): { summary: string; children: ChangeChild[] } {
   const empty = { summary: '', children: [] as ChangeChild[] };
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return empty;
-  let container = payload as Record<string, unknown>;
-  // Unwrap a sender-keyed wrapper: { "lares4 console": { LIGHTS: [...], ... } }.
-  const entries = Object.entries(container);
-  if (entries.length === 1) {
-    const [, val] = entries[0]!;
-    if (val && typeof val === 'object' && !Array.isArray(val)) {
-      const inner = val as Record<string, unknown>;
-      // Heuristic: descend only if inner values look like device-type lists/objects.
-      const innerHasContainers = Object.values(inner).some(
-        (v) => v !== null && typeof v === 'object',
-      );
-      if (innerHasContainers) container = inner;
-    }
-  }
+  const container = unwrapSenderWrapper(payload as Record<string, unknown>);
   const children: ChangeChild[] = [];
-  const counts: Array<{ key: string; n: number }> = [];
+  let totalCount = 0;
   for (const [typeKey, value] of Object.entries(container)) {
     if (value === null || typeof value !== 'object') continue;
     const items = Array.isArray(value) ? value : [value];
-    let count = 0;
+    let n = 0;
     for (const item of items) {
       if (!item || typeof item !== 'object') continue;
-      const obj = item as Record<string, unknown>;
-      const id = obj.ID ?? obj.id;
-      const sta = obj.STA ?? obj.state;
-      const idPart = id !== undefined ? `[${String(id)}]` : '';
-      const valuePart = sta !== undefined
-        ? ` STA=${String(sta)}`
-        : Object.entries(obj)
-          .filter(([k]) => k !== 'ID' && k !== 'id')
-          .slice(0, 2)
-          .map(([k, v]) => ` ${k}=${typeof v === 'object' ? '…' : String(v)}`)
-          .join('');
-      children.push({
-        key: `${typeKey}${idPart}-${String(children.length)}`,
-        line: `${typeKey}${idPart}${valuePart}`,
-      });
-      count += 1;
+      n += 1;
     }
-    if (count > 0) counts.push({ key: typeKey, n: count });
+    if (n === 0) continue;
+    totalCount += n;
+    children.push({ key: typeKey, line: typeKey });
   }
   if (children.length === 0) return empty;
-  counts.sort((a, b) => b.n - a.n);
-  const top = counts.slice(0, 3).map((c) => `${c.key}×${String(c.n)}`).join(' ');
-  const more = counts.length > 3 ? ` …` : '';
-  const summary = `${String(children.length)} items · ${top}${more}`;
-  return { summary, children };
+  return { summary: `${String(totalCount)} items`, children };
 }
 
 export function summarizeForPreview(tag: LogTag, payload: unknown, fallback: string): string {
@@ -153,9 +146,10 @@ export function summarizeForPreview(tag: LogTag, payload: unknown, fallback: str
     return fallback;
   }
   if (tag === 'CHANGE') {
-    const top = topKeyAndId(obj);
+    const unwrapped = unwrapSenderWrapper(obj);
+    const top = topKeyAndId(unwrapped);
     if (!top) return fallback;
-    return top.idPart ? `${top.key}${top.idPart.startsWith('[') ? '' : ' '}${top.idPart}` : top.key;
+    return top.key;
   }
   if (tag === 'BULK') {
     const keys = Object.keys(obj).filter((k) => {
@@ -285,16 +279,27 @@ export function buildMessageListItems(
   for (const [id, groupEntries] of grouped.entries()) {
     const first = groupEntries[0];
     if (!first) continue;
-    const folded = first.folded;
+    const semanticEntry = groupEntries.find((e) => SEMANTIC_TAGS.has(e.tag));
+    const rawEntry = groupEntries.find((e) => e.tag === 'RAW_RX');
+    // Prefer the decoded entry's tag/payload/ts when a raw wire frame and its decoded twin
+    // share this group's id. The raw frame moves into the wireFrame metadata.
+    const primary = semanticEntry && rawEntry ? semanticEntry : first;
+    const folded = primary.folded;
     const expanded = expandedMessageIds?.has(id) ?? false;
     const content = folded
       ? (expanded ? folded.full : folded.preview)
       : groupEntries.map((e) => (e.message.length > 0 ? e.message : ' ')).join('\n');
     const firstLine = content.split('\n')[0] ?? '';
-    const payload = groupEntries.find((e) => e.payload !== undefined)?.payload;
-    let summary = summarizeForPreview(first.tag, payload, firstLine);
+    const semanticPayload = semanticEntry && rawEntry
+      ? semanticEntry.payload
+      : groupEntries.find((e) => e.payload !== undefined)?.payload;
+    const payload = semanticPayload;
+    const typedCommand = groupEntries.find((e) => typeof e.command === 'string' && e.command.length > 0)?.command;
+    let summary = typedCommand && primary.tag !== 'LOG'
+      ? `> ${typedCommand}`
+      : summarizeForPreview(primary.tag, payload, firstLine);
     let children: ChangeChild[] | undefined;
-    if (first.tag === 'CHANGE' || first.tag === 'BULK') {
+    if (!typedCommand && (primary.tag === 'CHANGE' || primary.tag === 'BULK')) {
       const extracted = extractChangeChildren(payload);
       if (extracted.children.length > 1) {
         summary = extracted.summary;
@@ -303,18 +308,24 @@ export function buildMessageListItems(
     }
     const previewBase = summary.length > 100 ? `${summary.slice(0, 100)}…` : summary;
     const ack = groupEntries.find((e) => e.ack !== undefined)?.ack;
+    const correlationId = groupEntries.find((e) => e.correlationId !== undefined)?.correlationId;
+    const wireFrame = semanticEntry && rawEntry
+      ? { payload: rawEntry.payload, content: rawEntry.message, ts: rawEntry.ts }
+      : primary.wireFrame;
     items.push({
       id,
-      tag: first.tag,
-      source: entrySource(first),
-      ts: first.ts,
+      tag: primary.tag,
+      source: entrySource(primary),
+      ts: primary.ts,
       preview: folded && !expanded ? `${previewBase} [collapsed]` : previewBase,
       collapsed: Boolean(folded && !expanded),
       content,
       payload,
+      correlationId,
       ack,
+      wireFrame,
       children,
-      merged: [{ entryId: first.entryId, ts: first.ts, payload, content }],
+      merged: [{ entryId: primary.entryId, ts: primary.ts, payload, content }],
     });
   }
   const mergedItems: MessageListItem[] = [];

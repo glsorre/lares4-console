@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
   Cable,
@@ -45,68 +46,40 @@ type ConnErrorKind = 'auth' | 'network' | 'tls' | 'validation' | 'generic';
 
 interface ClassifiedError {
   kind: ConnErrorKind;
-  title: string;
-  message: string;
-  hint?: string;
+  titleKey: string;
+  hintKey?: string;
   Icon: typeof TriangleAlert;
 }
 
 function classifyConnectionError(raw: string): ClassifiedError {
   const lower = raw.toLowerCase();
   if (/pin|auth|unauthor|forbidden|denied/.test(lower)) {
-    return {
-      kind: 'auth',
-      title: 'Authentication failed',
-      message: raw,
-      hint: 'Verify the PIN on the panel keypad, then retry.',
-      Icon: KeyRound,
-    };
+    return { kind: 'auth', titleKey: 'connect.errAuthTitle', hintKey: 'connect.errAuthHint', Icon: KeyRound };
   }
   if (/tls|ssl|cert|self-?signed|handshake/.test(lower)) {
-    return {
-      kind: 'tls',
-      title: 'TLS / certificate issue',
-      message: raw,
-      hint: 'Toggle Secure WebSocket (WSS) or accept the panel’s self-signed cert.',
-      Icon: ShieldAlert,
-    };
+    return { kind: 'tls', titleKey: 'connect.errTlsTitle', hintKey: 'connect.errTlsHint', Icon: ShieldAlert };
   }
   if (/etimedout|econnrefused|enotfound|enetunreach|network|unreachable|timeout|socket|connection (closed|reset|aborted)/.test(lower)) {
-    return {
-      kind: 'network',
-      title: 'Panel unreachable',
-      message: raw,
-      hint: 'Check the IP, that the panel is online, and the network reaches it.',
-      Icon: WifiOff,
-    };
+    return { kind: 'network', titleKey: 'connect.errNetTitle', hintKey: 'connect.errNetHint', Icon: WifiOff };
   }
   if (/required|invalid|empty|missing|format/.test(lower)) {
-    return {
-      kind: 'validation',
-      title: 'Invalid input',
-      message: raw,
-      Icon: TriangleAlert,
-    };
+    return { kind: 'validation', titleKey: 'connect.errValidationTitle', Icon: TriangleAlert };
   }
-  return {
-    kind: 'generic',
-    title: 'Connection error',
-    message: raw,
-    Icon: TriangleAlert,
-  };
+  return { kind: 'generic', titleKey: 'connect.errGenericTitle', Icon: TriangleAlert };
 }
 
 function ErrorAlert({ raw }: { raw: string }) {
+  const { t } = useTranslation();
   const err = classifyConnectionError(raw);
   const Icon = err.Icon;
   return (
     <Alert variant="destructive" className="mb-3 py-2">
       <Icon className="size-3.5" aria-hidden />
-      <AlertTitle className="text-xs font-semibold">{err.title}</AlertTitle>
+      <AlertTitle className="text-xs font-semibold">{t(err.titleKey)}</AlertTitle>
       <AlertDescription className="text-xs leading-snug">
-        <span className="break-words">{err.message}</span>
-        {err.hint && (
-          <span className="text-muted-foreground mt-1 block">{err.hint}</span>
+        <span className="break-words">{raw}</span>
+        {err.hintKey && (
+          <span className="text-muted-foreground mt-1 block">{t(err.hintKey)}</span>
         )}
       </AlertDescription>
     </Alert>
@@ -114,6 +87,7 @@ function ErrorAlert({ raw }: { raw: string }) {
 }
 
 export function ConnectionSidebar() {
+  const { t } = useTranslation();
   const { controller, snapshot } = useSessionController();
 
   const [view, setView] = useState<View>('list');
@@ -283,9 +257,9 @@ export function ConnectionSidebar() {
         <div className="border-b border-border/60 px-3 py-3">
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-heading text-foreground text-sm font-semibold">
-              {sessionActive ? 'Active connection' : 'Connections'}
+              {sessionActive ? t('connect.activeConnection') : t('connect.connections')}
             </h2>
-            <Button type="button" variant="ghost" size="sm" className="size-7 p-0" onClick={openNewForm} aria-label="New connection">
+            <Button type="button" variant="ghost" size="sm" className="size-7 p-0" onClick={openNewForm} aria-label={t('connect.newConnectionAria')}>
               <Plus className="size-3.5" aria-hidden />
             </Button>
           </div>
@@ -296,17 +270,17 @@ export function ConnectionSidebar() {
 
           {profiles.length === 0 ? (
             <p className="text-muted-foreground text-xs leading-relaxed">
-              No profiles. Use <strong className="text-foreground">+</strong> to add one.
+              <Trans i18nKey="connect.noProfilesHtml" components={{ strong: <strong className="text-foreground" /> }} />
             </p>
           ) : orphanActiveName ? (
             <div className="border-emerald-500/40 ring-emerald-500/20 rounded-lg border bg-card p-2.5 shadow-sm ring-1">
               <div className="mb-2 flex items-center gap-1">
                 <span className="text-foreground truncate text-xs font-semibold leading-tight">{orphanActiveName}</span>
                 <Badge className="h-3.5 bg-emerald-100 px-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                  Connected
+                  {t('connect.connectedBadge')}
                 </Badge>
               </div>
-              <p className="text-muted-foreground mb-2 text-[0.6rem]">Profile no longer in saved list.</p>
+              <p className="text-muted-foreground mb-2 text-[0.6rem]">{t('connect.orphanProfileNote')}</p>
               <Button
                 type="button"
                 size="sm"
@@ -315,7 +289,7 @@ export function ConnectionSidebar() {
                 onClick={() => controller.disconnect()}
               >
                 <Unplug className="size-3" aria-hidden />
-                Disconnect
+                {t('connect.disconnect')}
               </Button>
             </div>
           ) : (
@@ -335,7 +309,7 @@ export function ConnectionSidebar() {
                             {p.name === persistedDefault && (
                               <Star
                                 className="size-3 shrink-0 fill-current text-muted-foreground/70"
-                                aria-label="Default profile"
+                                aria-label={t('connect.defaultProfileAria')}
                               />
                             )}
                             <span className="text-foreground truncate text-xs font-semibold leading-tight">
@@ -343,7 +317,7 @@ export function ConnectionSidebar() {
                             </span>
                             {isActiveProfile && (
                               <Badge className="h-3.5 bg-emerald-100 px-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                Connected
+                                {t('connect.connectedBadge')}
                               </Badge>
                             )}
                           </div>
@@ -356,20 +330,20 @@ export function ConnectionSidebar() {
                               variant="ghost"
                               size="sm"
                               className="size-6 shrink-0 p-0 opacity-50 hover:opacity-100"
-                              aria-label={`Options for ${p.name}`}
+                              aria-label={t('connect.optionsForAria', { name: p.name })}
                             >
                               <MoreHorizontal className="size-3.5" aria-hidden />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="text-xs">
                             <DropdownMenuItem onSelect={() => openEditForm(p)}>
-                              Edit
+                              {t('connect.edit')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={p.name === persistedDefault || defaultingName !== null}
                               onSelect={() => void makeDefault(p.name)}
                             >
-                              {defaultingName === p.name ? 'Setting…' : 'Set as default'}
+                              {defaultingName === p.name ? t('connect.settingDots') : t('connect.setAsDefault')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -377,7 +351,7 @@ export function ConnectionSidebar() {
                               onSelect={() => setDeleteTarget(p.name)}
                             >
                               <Trash2 className="size-3" aria-hidden />
-                              Delete
+                              {t('connect.delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -391,7 +365,7 @@ export function ConnectionSidebar() {
                           onClick={() => controller.disconnect()}
                         >
                           <Unplug className="size-3" aria-hidden />
-                          Disconnect
+                          {t('connect.disconnect')}
                         </Button>
                       ) : (
                         <Button
@@ -402,9 +376,9 @@ export function ConnectionSidebar() {
                           onClick={() => connectFromCard(p)}
                         >
                           {isThisConnecting ? (
-                            <><Loader2 className="size-3 animate-spin" aria-hidden />Connecting…</>
+                            <><Loader2 className="size-3 animate-spin" aria-hidden />{t('connect.connectingBtn')}</>
                           ) : (
-                            <><Cable className="size-3" aria-hidden />Connect</>
+                            <><Cable className="size-3" aria-hidden />{t('connect.connectBtn')}</>
                           )}
                         </Button>
                       )}
@@ -420,17 +394,17 @@ export function ConnectionSidebar() {
         <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
           <DialogContent showCloseButton={!deleting}>
             <DialogHeader>
-              <DialogTitle>Remove profile?</DialogTitle>
+              <DialogTitle>{t('connect.removeProfileTitle')}</DialogTitle>
               <DialogDescription>
-                Removes <span className="text-foreground font-medium">{deleteTarget ?? ''}</span> permanently.
+                <Trans i18nKey="connect.removeProfileDesc" values={{ name: deleteTarget ?? '' }} components={{ strong: <span className="text-foreground font-medium" /> }} />
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>
-                Cancel
+                {t('connect.cancel')}
               </Button>
               <Button type="button" variant="destructive" disabled={deleting} onClick={() => void confirmDelete()}>
-                {deleting ? <><Loader2 className="size-4 animate-spin" aria-hidden />Removing</> : 'Remove'}
+                {deleting ? <><Loader2 className="size-4 animate-spin" aria-hidden />{t('connect.removing')}</> : t('connect.remove')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -445,12 +419,12 @@ export function ConnectionSidebar() {
       <div className="border-b border-border/60 px-3 py-3">
         <div className="flex items-center gap-2">
           {canGoBack && (
-            <Button type="button" variant="ghost" size="sm" className="size-7 shrink-0 p-0" onClick={goBack} aria-label="Back">
+            <Button type="button" variant="ghost" size="sm" className="size-7 shrink-0 p-0" onClick={goBack} aria-label={t('connect.back')}>
               <ArrowLeft className="size-3.5" aria-hidden />
             </Button>
           )}
           <h2 className="font-heading text-foreground truncate text-sm font-semibold">
-            {isEditMode ? `Edit` : 'New connection'}
+            {isEditMode ? t('connect.editTitle') : t('connect.newConnectionTitle')}
           </h2>
         </div>
         {isEditMode && (
@@ -467,12 +441,12 @@ export function ConnectionSidebar() {
 
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label htmlFor="sb-ip" className="text-xs text-muted-foreground">IP / host</Label>
+            <Label htmlFor="sb-ip" className="text-xs text-muted-foreground">{t('connect.ipHost')}</Label>
             <Input
               id="sb-ip"
               value={ip}
               className="h-8 font-mono text-xs"
-              placeholder="192.168.1.10"
+              placeholder={t('connect.ipPlaceholder')}
               autoComplete="off"
               spellCheck={false}
               autoFocus
@@ -480,13 +454,13 @@ export function ConnectionSidebar() {
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="sb-pin" className="text-xs text-muted-foreground">PIN</Label>
+            <Label htmlFor="sb-pin" className="text-xs text-muted-foreground">{t('connect.pin')}</Label>
             <Input
               id="sb-pin"
               type="password"
               value={pin}
               className="h-8 font-mono text-xs"
-              placeholder="••••••"
+              placeholder={t('connect.pinPlaceholder')}
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setPin(e.target.value)}
@@ -494,11 +468,11 @@ export function ConnectionSidebar() {
           </div>
           <div className="flex items-center gap-1.5">
             <Checkbox id="sb-wss" checked={wss} onCheckedChange={(c) => setWss(c === true)} className="size-3.5" />
-            <Label htmlFor="sb-wss" className="text-xs font-normal leading-none">Secure WebSocket (WSS)</Label>
+            <Label htmlFor="sb-wss" className="text-xs font-normal leading-none">{t('connect.wss')}</Label>
           </div>
           <div className="flex items-center gap-1.5">
             <Checkbox id="sb-readonly" checked={readOnly} onCheckedChange={(c) => setReadOnly(c === true)} className="size-3.5" />
-            <Label htmlFor="sb-readonly" className="text-xs font-normal leading-none">Read-only on connect</Label>
+            <Label htmlFor="sb-readonly" className="text-xs font-normal leading-none">{t('connect.readOnlyOnConnect')}</Label>
           </div>
         </div>
       </div>
@@ -507,27 +481,27 @@ export function ConnectionSidebar() {
       <div className="border-t border-border/60 flex flex-col gap-0">
         <div className="px-3 pt-3 pb-2 space-y-3">
           <p className="text-muted-foreground text-[0.6rem] font-medium uppercase tracking-wider">
-            Save as profile — optional
+            {t('connect.saveAsProfile')}
           </p>
           <div className="space-y-1">
-            <Label htmlFor="sb-name" className="text-xs text-muted-foreground">Profile name</Label>
+            <Label htmlFor="sb-name" className="text-xs text-muted-foreground">{t('connect.profileName')}</Label>
             <Input
               id="sb-name"
               value={name}
               className="h-8 text-xs"
-              placeholder="e.g. Home panel"
+              placeholder={t('connect.profileNamePlaceholder')}
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="sb-sender" className="text-xs text-muted-foreground">Sender label</Label>
+            <Label htmlFor="sb-sender" className="text-xs text-muted-foreground">{t('connect.senderLabel')}</Label>
             <Input
               id="sb-sender"
               value={sender}
               className="h-8 text-xs"
-              placeholder="lares4 console"
+              placeholder={t('connect.senderPlaceholder')}
               autoComplete="off"
               spellCheck={false}
               onChange={(e) => setSender(e.target.value)}
@@ -535,7 +509,7 @@ export function ConnectionSidebar() {
           </div>
           <div className="flex items-center gap-1.5">
             <Checkbox id="sb-default" checked={saveAsDefault} onCheckedChange={(c) => setSaveAsDefault(c === true)} className="size-3.5" />
-            <Label htmlFor="sb-default" className="text-xs font-normal leading-none">Set as default</Label>
+            <Label htmlFor="sb-default" className="text-xs font-normal leading-none">{t('connect.setAsDefaultCheckbox')}</Label>
           </div>
         </div>
         <div className={cn('border-t border-border/60 px-3 py-3', 'flex flex-col gap-2')}>
@@ -550,7 +524,7 @@ export function ConnectionSidebar() {
               onClick={() => void updateProfile()}
             >
               {saving ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <Check className="size-3" aria-hidden />}
-              Update profile
+              {t('connect.updateProfile')}
             </Button>
             <Button
               type="button"
@@ -560,8 +534,8 @@ export function ConnectionSidebar() {
               onClick={connectFromForm}
             >
               {isConnecting
-                ? <><Loader2 className="size-3 animate-spin" aria-hidden />Connecting…</>
-                : <><Cable className="size-3" aria-hidden />Connect</>}
+                ? <><Loader2 className="size-3 animate-spin" aria-hidden />{t('connect.connectingBtn')}</>
+                : <><Cable className="size-3" aria-hidden />{t('connect.connectBtn')}</>}
             </Button>
           </>
         ) : (
@@ -574,8 +548,8 @@ export function ConnectionSidebar() {
               onClick={connectFromForm}
             >
               {isConnecting && !saving
-                ? <><Loader2 className="size-3 animate-spin" aria-hidden />Connecting…</>
-                : <><Cable className="size-3" aria-hidden />Connect</>}
+                ? <><Loader2 className="size-3 animate-spin" aria-hidden />{t('connect.connectingBtn')}</>
+                : <><Cable className="size-3" aria-hidden />{t('connect.connectBtn')}</>}
             </Button>
             <Button
               type="button"
@@ -583,11 +557,11 @@ export function ConnectionSidebar() {
               size="sm"
               className="w-full gap-1.5 text-xs"
               disabled={saveConnectDisabled}
-              title={!name.trim() ? 'Enter a name to save.' : undefined}
+              title={!name.trim() ? t('connect.enterNameTitle') : undefined}
               onClick={() => void saveAndConnect()}
             >
               {saving ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <Check className="size-3" aria-hidden />}
-              Save &amp; connect
+              {t('connect.saveAndConnect')}
             </Button>
           </>
         )}

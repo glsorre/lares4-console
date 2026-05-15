@@ -5,9 +5,11 @@ import { getTagClasses } from '../runtime/log-tag-classes.js';
 interface LogTagChipProps {
   tag: LogTag;
   className?: string;
+  title?: string;
+  'aria-label'?: string;
 }
 
-export function LogTagChip({ tag, className }: LogTagChipProps) {
+export function LogTagChip({ tag, className, title, 'aria-label': ariaLabel }: LogTagChipProps) {
   return (
     <span
       className={cn(
@@ -15,6 +17,8 @@ export function LogTagChip({ tag, className }: LogTagChipProps) {
         getTagClasses(tag),
         className,
       )}
+      title={title}
+      aria-label={ariaLabel}
     >
       {tag}
     </span>

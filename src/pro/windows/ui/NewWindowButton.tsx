@@ -3,12 +3,14 @@
 
 import { SquarePlus } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ProFeatureLock } from '@/desktop/components/ProFeatureLock.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { useWindows } from '../context.js';
 
 export function NewWindowButton() {
+  const { t } = useTranslation();
   const { controller, snapshot } = useWindows();
   const { snapshot: session } = useSessionController();
   const location = useLocation();
@@ -17,14 +19,14 @@ export function NewWindowButton() {
     return (
       <ProFeatureLock
         featureId="multiwindow"
-        label="New window"
+        label={t('pro.windows.newWindow')}
         variant="inline"
         leadingIcon={SquarePlus}
       />
     );
   }
 
-  const label = 'New window';
+  const label = t('pro.windows.newWindow');
 
   return (
     <Button
