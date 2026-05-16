@@ -14,6 +14,8 @@ export interface ClientEnv {
   pin: string;
   sender: string;
   wss: boolean;
+  /** Route through the Tauri-side WS bridge with a relaxed TLS verifier (self-signed certs). */
+  acceptInvalidCerts?: boolean;
 }
 
 export interface CreateLaresClientOptions {
@@ -24,7 +26,7 @@ export interface CreateLaresClientOptions {
 }
 
 export async function createLaresClient(env: ClientEnv, options: CreateLaresClientOptions = {}) {
-  const emitter = createSocketEmitter();
+  const emitter = createSocketEmitter({ acceptInvalidCerts: env.acceptInvalidCerts === true });
   if (options.onSocketSend) emitter.onSend(options.onSocketSend);
   if (options.onSocketReceive) emitter.onReceive(options.onSocketReceive);
   if (options.onSocketError) emitter.onError(options.onSocketError);

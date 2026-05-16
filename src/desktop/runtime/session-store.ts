@@ -20,6 +20,7 @@ export const INITIAL_SESSION_SNAPSHOT: SessionSnapshot = {
   activeMacro: undefined,
   recordingMacro: false,
   recordingMacroSteps: 0,
+  recordingMacroStartedAt: undefined,
   topology: { groups: [], total: 0 },
   topologyDiff: { addedIds: new Set(), removedIds: new Set() },
   bookmarks: [],
@@ -70,6 +71,7 @@ export interface MacrosSlice {
   activeMacro: ActiveMacroSnapshot | undefined;
   recordingMacro: boolean;
   recordingMacroSteps: number;
+  recordingMacroStartedAt: number | undefined;
 }
 
 export function useMacrosSlice(): MacrosSlice {
@@ -79,6 +81,7 @@ export function useMacrosSlice(): MacrosSlice {
       activeMacro: s.activeMacro,
       recordingMacro: s.recordingMacro,
       recordingMacroSteps: s.recordingMacroSteps,
+      recordingMacroStartedAt: s.recordingMacroStartedAt,
     })),
   );
 }

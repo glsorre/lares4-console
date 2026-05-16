@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // See LICENSE in src/pro/macros.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Copy, Loader2, MoreVertical, Plus, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,9 +13,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { Macro, MacroStep } from '../types.js';
+import { Textarea } from '@/components/ui/textarea';
+import { DEFAULT_STEP_DELAY_MS, type Macro, type MacroStep } from '../types.js';
 
 interface MacroEditorDialogProps {
   open: boolean;
@@ -24,39 +32,89 @@ interface MacroEditorDialogProps {
   onSave: (input: { id?: string; name: string; description?: string; steps: MacroStep[] }) => Promise<void>;
 }
 
-function stepsToText(steps: MacroStep[]): string {
-  return steps.map((s) => s.command).join('\n');
-}
-
-function textToSteps(text: string, originalSteps?: MacroStep[]): MacroStep[] {
-  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
-  return lines.map((command) => {
-    const prev = originalSteps?.find((s) => s.command === command);
-    return prev?.delayMs !== undefined ? { command, delayMs: prev.delayMs } : { command };
-  });
+function coerceDelay(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === '') return undefined;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n;
 }
 
 export function MacroEditorDialog({ open, initial, onOpenChange, onSave }: MacroEditorDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [text, setText] = useState('');
+  const [steps, setSteps] = useState<MacroStep[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const commandRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const pendingFocusRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (open) {
       setName(initial?.name ?? '');
       setDescription(initial?.description ?? '');
-      setText(initial ? stepsToText(initial.steps) : '');
+      setSteps(initial ? initial.steps.map((s) => ({ ...s })) : [{ command: '' }]);
       setSaving(false);
       setError(null);
     }
   }, [open, initial]);
 
+  useEffect(() => {
+    if (pendingFocusRef.current === null) return;
+    const idx = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    const el = commandRefs.current[idx];
+    if (el) el.focus();
+  }, [steps]);
+
+  function updateStep(index: number, patch: Partial<MacroStep>) {
+    setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  }
+
+  function removeStep(index: number) {
+    setSteps((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addStep() {
+    setSteps((prev) => {
+      pendingFocusRef.current = prev.length;
+      return [...prev, { command: '' }];
+    });
+  }
+
+  function duplicateStep(index: number) {
+    setSteps((prev) => {
+      const src = prev[index];
+      if (!src) return prev;
+      const copy: MacroStep = src.delayMs !== undefined
+        ? { command: src.command, delayMs: src.delayMs }
+        : { command: src.command };
+      pendingFocusRef.current = index + 1;
+      return [...prev.slice(0, index + 1), copy, ...prev.slice(index + 1)];
+    });
+  }
+
+  function moveStep(index: number, dir: -1 | 1) {
+    setSteps((prev) => {
+      const target = index + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = prev.slice();
+      const tmp = next[index]!;
+      next[index] = next[target]!;
+      next[target] = tmp;
+      return next;
+    });
+  }
+
   const trimmedName = name.trim();
-  const steps = textToSteps(text, initial?.steps);
-  const canSave = trimmedName.length > 0 && steps.length > 0 && !saving;
+  const nonEmptySteps = steps.filter((s) => s.command.trim().length > 0);
+  const hasEmptyCommand = steps.some((s) => s.command.trim().length === 0);
+  const canSave =
+    trimmedName.length > 0 &&
+    steps.length > 0 &&
+    !hasEmptyCommand &&
+    !saving;
 
   async function handleSave() {
     if (!canSave) return;
@@ -67,12 +125,32 @@ export function MacroEditorDialog({ open, initial, onOpenChange, onSave }: Macro
         id: initial?.id,
         name: trimmedName,
         description: description.trim() || undefined,
-        steps,
+        steps: steps.map((s) => {
+          const command = s.command.trim();
+          return s.delayMs !== undefined ? { command, delayMs: s.delayMs } : { command };
+        }),
       });
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSaving(false);
+    }
+  }
+
+  function onStepKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      void handleSave();
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const step = steps[index];
+      if (!step) return;
+      if (step.command.trim().length === 0) return;
+      if (index === steps.length - 1) {
+        e.preventDefault();
+        addStep();
+      }
     }
   }
 
@@ -94,30 +172,145 @@ export function MacroEditorDialog({ open, initial, onOpenChange, onSave }: Macro
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleSave();
+                }
+              }}
               placeholder={t('pro.macros.editor.namePlaceholder')}
             />
           </div>
           <div className="space-y-1">
             <Label htmlFor="macro-desc" className="text-xs text-muted-foreground">{t('pro.macros.editor.descLabel')}</Label>
-            <Input
+            <Textarea
               id="macro-desc"
-              className="h-8 text-xs"
+              className="min-h-14 text-xs"
+              rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleSave();
+                }
+              }}
               placeholder={t('pro.macros.editor.descPlaceholder')}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="macro-steps" className="text-xs text-muted-foreground">{t('pro.macros.editor.commandsLabel')}</Label>
-            <textarea
-              id="macro-steps"
-              className="border-border/70 bg-background min-h-[140px] w-full rounded-md border px-2 py-1.5 font-mono text-xs shadow-inner focus:outline-none focus:ring-2 focus:ring-ring"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={t('pro.macros.editor.commandsPlaceholder')}
-              spellCheck={false}
-            />
-            <p className="text-muted-foreground text-[0.65rem]">{t('pro.macros.steps', { count: steps.length })}</p>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">{t('pro.macros.editor.commandsLabel')}</Label>
+            <div className="space-y-2">
+              {steps.map((step, index) => {
+                const cmdId = `macro-step-cmd-${index}`;
+                const delayId = `macro-step-delay-${index}`;
+                const isFirst = index === 0;
+                const isLast = index === steps.length - 1;
+                return (
+                  <div key={index} className="border-border/60 bg-background/40 rounded-md border p-2">
+                    <div className="text-muted-foreground mb-1 text-[0.65rem]">
+                      {t('pro.macros.editor.stepNumber', { n: index + 1 })}
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1">
+                        <Label htmlFor={cmdId} className="sr-only">
+                          {t('pro.macros.editor.stepCommandLabel', { n: index + 1 })}
+                        </Label>
+                        <Input
+                          id={cmdId}
+                          ref={(el) => { commandRefs.current[index] = el; }}
+                          value={step.command}
+                          onChange={(e) => updateStep(index, { command: e.target.value })}
+                          onKeyDown={(e) => onStepKeyDown(index, e)}
+                          placeholder={t('pro.macros.editor.stepCommandPlaceholder')}
+                          className="h-8 font-mono text-xs"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="w-28">
+                        <Label htmlFor={delayId} className="sr-only">
+                          {t('pro.macros.editor.stepDelayLabel', { n: index + 1 })}
+                        </Label>
+                        <Input
+                          id={delayId}
+                          type="number"
+                          min={0}
+                          step={50}
+                          value={step.delayMs ?? ''}
+                          onChange={(e) => updateStep(index, { delayMs: coerceDelay(e.target.value) })}
+                          placeholder={String(DEFAULT_STEP_DELAY_MS)}
+                          className="h-8 text-xs"
+                          aria-label={t('pro.macros.editor.stepDelayLabel', { n: index + 1 })}
+                        />
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground hover:text-foreground h-8 w-8 shrink-0 p-0"
+                            aria-label={t('pro.macros.editor.stepActions', { n: index + 1 })}
+                          >
+                            <MoreVertical className="size-3.5" aria-hidden />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="text-xs">
+                          <DropdownMenuItem
+                            disabled={isFirst}
+                            onSelect={() => moveStep(index, -1)}
+                            aria-label={t('pro.macros.editor.stepMoveUp', { n: index + 1 })}
+                          >
+                            <ChevronUp className="size-3" aria-hidden />
+                            {t('pro.macros.editor.stepMoveUp', { n: index + 1 })}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={isLast}
+                            onSelect={() => moveStep(index, 1)}
+                            aria-label={t('pro.macros.editor.stepMoveDown', { n: index + 1 })}
+                          >
+                            <ChevronDown className="size-3" aria-hidden />
+                            {t('pro.macros.editor.stepMoveDown', { n: index + 1 })}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => duplicateStep(index)}
+                            aria-label={t('pro.macros.editor.stepDuplicate', { n: index + 1 })}
+                          >
+                            <Copy className="size-3" aria-hidden />
+                            {t('pro.macros.editor.stepDuplicate', { n: index + 1 })}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => removeStep(index)}
+                            aria-label={t('pro.macros.editor.stepRemove', { n: index + 1 })}
+                          >
+                            <Trash2 className="size-3" aria-hidden />
+                            {t('pro.macros.editor.stepRemove', { n: index + 1 })}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 w-full text-xs"
+              onClick={addStep}
+              disabled={saving}
+            >
+              <Plus className="size-3.5" aria-hidden />
+              {t('pro.macros.editor.addStep')}
+            </Button>
+            <p className="text-muted-foreground text-[0.65rem]">
+              {t('pro.macros.steps', { count: nonEmptySteps.length })}
+              {' · '}
+              {t('pro.macros.editor.delayHint', { default: DEFAULT_STEP_DELAY_MS })}
+            </p>
           </div>
           {error && <p className="text-destructive text-xs">{error}</p>}
         </div>

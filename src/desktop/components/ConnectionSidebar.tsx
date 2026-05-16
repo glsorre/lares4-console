@@ -26,6 +26,7 @@ const EMPTY_FORM: ConnectionFormValues = {
   name: '',
   sender: DEFAULT_SENDER,
   wss: true,
+  acceptInvalidCerts: false,
   readOnly: false,
   saveAsDefault: true,
 };
@@ -37,6 +38,7 @@ function profileToFormValues(p: ConnectionProfile): ConnectionFormValues {
     name: p.name,
     sender: p.sender,
     wss: p.wss,
+    acceptInvalidCerts: p.acceptInvalidCerts === true,
     readOnly: p.readOnly === true,
     saveAsDefault: false,
   };
@@ -101,13 +103,27 @@ export function ConnectionSidebar() {
   function connectFromCard(p: ConnectionProfile) {
     setConnectingName(p.name);
     setErrorMsg(null);
-    void controller.connect({ ip: p.ip, pin: p.pin, sender: p.sender, wss: p.wss, profileName: p.name });
+    void controller.connect({
+      ip: p.ip,
+      pin: p.pin,
+      sender: p.sender,
+      wss: p.wss,
+      acceptInvalidCerts: p.acceptInvalidCerts === true,
+      profileName: p.name,
+    });
   }
 
   function connectFromForm(values: ConnectionFormValues) {
     setErrorMsg(null);
     const profileName = editingProfile?.name ?? (values.name.trim() || undefined);
-    void controller.connect({ ip: values.ip, pin: values.pin, sender: values.sender, wss: values.wss, profileName });
+    void controller.connect({
+      ip: values.ip,
+      pin: values.pin,
+      sender: values.sender,
+      wss: values.wss,
+      acceptInvalidCerts: values.acceptInvalidCerts,
+      profileName,
+    });
   }
 
   async function saveAndConnect(values: ConnectionFormValues) {
@@ -123,10 +139,18 @@ export function ConnectionSidebar() {
         sender: values.sender,
         wss: values.wss,
         readOnly: values.readOnly,
+        acceptInvalidCerts: values.acceptInvalidCerts,
         makeDefault: values.saveAsDefault,
       });
       await refreshProfiles();
-      void controller.connect({ ip: values.ip, pin: values.pin, sender: values.sender, wss: values.wss, profileName: trimmed });
+      void controller.connect({
+        ip: values.ip,
+        pin: values.pin,
+        sender: values.sender,
+        wss: values.wss,
+        acceptInvalidCerts: values.acceptInvalidCerts,
+        profileName: trimmed,
+      });
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setSaving(false);
@@ -146,6 +170,7 @@ export function ConnectionSidebar() {
         sender: values.sender,
         wss: values.wss,
         readOnly: values.readOnly,
+        acceptInvalidCerts: values.acceptInvalidCerts,
         makeDefault: values.saveAsDefault,
       });
       await refreshProfiles();

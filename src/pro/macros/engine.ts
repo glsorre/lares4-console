@@ -13,6 +13,7 @@ export class MacroEngine {
   private mode: MacroMode = 'stopped';
   private timer: ReturnType<typeof setTimeout> | undefined;
   private activeName: string | undefined;
+  private activeId: string | undefined;
 
   constructor(
     private readonly submit: MacroSubmitFn,
@@ -24,12 +25,14 @@ export class MacroEngine {
   get position(): number { return this.index; }
   get total(): number { return this.steps.length; }
   get name(): string | undefined { return this.activeName; }
+  get id(): string | undefined { return this.activeId; }
   get playbackSpeed(): number { return this.speed; }
 
   load(macro: Macro): void {
     this.stop();
     this.steps = macro.steps;
     this.activeName = macro.name;
+    this.activeId = macro.id;
     this.index = 0;
     this.mode = 'paused';
     this.onChange();
@@ -63,6 +66,7 @@ export class MacroEngine {
     this.mode = 'stopped';
     this.index = 0;
     this.activeName = undefined;
+    this.activeId = undefined;
     this.steps = [];
     this.onChange();
   }

@@ -1,6 +1,12 @@
 import type { Lares4WsFactory } from 'lares4-ts';
 import type { SocketEventEmitted } from './socket-types.js';
 import { defaultLogger } from './lares-logger.js';
+import { TauriWebSocket, type TauriWsOpts } from './tauri-ws-socket.js';
+
+export interface SocketTlsOptions {
+  /** Route the socket through the Tauri Rust bridge with a relaxed TLS verifier. */
+  acceptInvalidCerts?: boolean;
+}
 
 /** Wire-layer frame event with the timestamp captured at the moment of send/receive. */
 export interface SocketFrame {
@@ -36,14 +42,22 @@ export interface SocketEmitter {
   onClose: (listener: SocketCloseListener) => () => void;
 }
 
-export function createSocketEmitter(): SocketEmitter {
+export function createSocketEmitter(tls: SocketTlsOptions = {}): SocketEmitter {
   const sendListeners = new Set<SocketSendListener>();
   const receiveListeners = new Set<SocketReceiveListener>();
   const errorListeners = new Set<SocketErrorListener>();
   const closeListeners = new Set<SocketCloseListener>();
+  const useTauriBridge = tls.acceptInvalidCerts === true;
+  const tauriOpts: TauriWsOpts = { acceptInvalidCerts: tls.acceptInvalidCerts === true };
 
   const factory: Lares4WsFactory = (url, protocols) => {
-    const ws = new WebSocket(url, protocols);
+    // WebKit cannot bypass TLS validation, so when a profile opts into accepting invalid
+    // certs we route through the Tauri-side WS bridge (Rust tokio-tungstenite).
+    const ws = (
+      useTauriBridge
+        ? (new TauriWebSocket(url, protocols, tauriOpts) as unknown as WebSocket)
+        : new WebSocket(url, protocols)
+    );
 
     const origSend = ws.send.bind(ws);
     ws.send = ((data: Parameters<WebSocket['send']>[0]) => {

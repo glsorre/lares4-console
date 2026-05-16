@@ -78,7 +78,7 @@ export interface MergedFrame {
   content: string;
 }
 
-function unwrapSenderWrapper(obj: Record<string, unknown>): Record<string, unknown> {
+export function unwrapSenderWrapper(obj: Record<string, unknown>): Record<string, unknown> {
   const entries = Object.entries(obj);
   if (entries.length !== 1) return obj;
   const [, val] = entries[0]!;

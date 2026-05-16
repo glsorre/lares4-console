@@ -66,10 +66,13 @@ export interface ConnectInput {
   pin: string;
   sender: string;
   wss: boolean;
+  /** Per-profile opt-in to bypass TLS cert validation (self-signed panels). */
+  acceptInvalidCerts?: boolean;
   profileName?: string;
 }
 
 export interface ActiveMacroSnapshot {
+  id: string;
   name: string;
   position: number;
   total: number;
@@ -97,6 +100,7 @@ export interface SessionSnapshot {
   activeMacro?: ActiveMacroSnapshot;
   recordingMacro: boolean;
   recordingMacroSteps: number;
+  recordingMacroStartedAt: number | undefined;
   topology: TopologySnapshot;
   topologyDiff: TopologyDiff;
   bookmarks: Bookmark[];
@@ -157,6 +161,7 @@ export class SessionController {
   private readonly macroEngine: MacroEngine;
   private macroRecordingBuffer: MacroStep[] | undefined;
   private macroRecordingPrevAtMs = 0;
+  private macroRecordingStartedAtMs: number | undefined;
   private submittingFromMacro = false;
   private readonly isMacrosLicensed: () => boolean;
   private readonly isTabsLicensed: () => boolean;
@@ -270,7 +275,8 @@ export class SessionController {
   }
 
   snapshot(): SessionSnapshot {
-    const activeMacro = this.macroEngine.name !== undefined ? {
+    const activeMacro = this.macroEngine.id !== undefined && this.macroEngine.name !== undefined ? {
+      id: this.macroEngine.id,
       name: this.macroEngine.name,
       position: this.macroEngine.position,
       total: this.macroEngine.total,
@@ -291,6 +297,7 @@ export class SessionController {
       activeMacro,
       recordingMacro: this.macroRecordingBuffer !== undefined,
       recordingMacroSteps: this.macroRecordingBuffer?.length ?? 0,
+      recordingMacroStartedAt: this.macroRecordingStartedAtMs,
       topology,
       topologyDiff: this.computeTopologyDiff(topology),
       bookmarks: this.snapshotBookmarks(),
@@ -618,8 +625,10 @@ export class SessionController {
 
   startRecordingMacro(): void {
     this.requireMacrosLicense();
+    const now = Date.now();
     this.macroRecordingBuffer = [];
-    this.macroRecordingPrevAtMs = Date.now();
+    this.macroRecordingPrevAtMs = now;
+    this.macroRecordingStartedAtMs = now;
     this.emit();
   }
 
@@ -627,6 +636,7 @@ export class SessionController {
     this.requireMacrosLicense();
     const steps = this.macroRecordingBuffer;
     this.macroRecordingBuffer = undefined;
+    this.macroRecordingStartedAtMs = undefined;
     this.emit();
     if (!steps || steps.length === 0) return undefined;
     return await this.saveMacro({ name, description, steps });
@@ -634,7 +644,20 @@ export class SessionController {
 
   cancelRecordingMacro(): void {
     this.macroRecordingBuffer = undefined;
+    this.macroRecordingStartedAtMs = undefined;
     this.emit();
+  }
+
+  async duplicateMacro(id: string): Promise<Macro | undefined> {
+    this.requireMacrosLicense();
+    const src = this.macros.find((m) => m.id === id);
+    if (!src) return undefined;
+    const copySuffix = ' (copy)';
+    return await this.saveMacro({
+      name: `${src.name}${copySuffix}`,
+      description: src.description,
+      steps: src.steps.map((s) => ({ ...s })),
+    });
   }
 
   private maybeRecordMacroStep(line: string): void {
@@ -736,6 +759,7 @@ export class SessionController {
     pin: string;
     wss: boolean;
     sender: string;
+    acceptInvalidCerts?: boolean;
     readOnly?: boolean;
     makeDefault?: boolean;
   }): Promise<void> {

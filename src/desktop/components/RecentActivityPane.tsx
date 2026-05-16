@@ -3,28 +3,38 @@ import { Activity, Lightbulb, Blinds, ToggleLeft, DoorClosed, Thermometer, Shiel
 import { useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
-import { topKeyAndId } from '../../core/log-view.js';
+import { topKeyAndId, unwrapSenderWrapper } from '../../core/log-view.js';
 import type { LogEntry } from '../../core/types.js';
 import type { TopologyKind, TopologyNode, TopologySnapshot } from '../../core/topology.js';
 
 const KIND_FROM_TOP_KEY: Record<string, TopologyKind> = {
   LIGHT: 'lights',
   LIGHTS: 'lights',
+  STATUS_LIGHTS: 'lights',
   COVER: 'covers',
   COVERS: 'covers',
+  STATUS_COVERS: 'covers',
   SWITCH: 'switches',
   SWITCHES: 'switches',
+  STATUS_SWITCHES: 'switches',
   GATE: 'gates',
   GATES: 'gates',
+  STATUS_GATES: 'gates',
   THERMOSTAT: 'thermostats',
   THERMOSTATS: 'thermostats',
+  STATUS_THERMOSTATS: 'thermostats',
+  STATUS_TEMPERATURES: 'thermostats',
   ZONE: 'zones',
   ZONES: 'zones',
+  STATUS_ZONES: 'zones',
   SCENARIO: 'scenarios',
   SCENARIOS: 'scenarios',
+  STATUS_SCENARIOS: 'scenarios',
   OUTPUT: 'outputs',
   OUTPUTS: 'outputs',
+  STATUS_OUTPUTS: 'outputs',
   SYSTEM: 'system',
+  STATUS_SYSTEM: 'system',
 };
 
 const KIND_ICON: Record<TopologyKind, typeof Activity> = {
@@ -57,7 +67,7 @@ function extractActivity(
 ): { kind: TopologyKind; id: string; label?: string; delta: string; status: TopologyNode['status'] } | undefined {
   if (entry.tag !== 'CHANGE' && entry.tag !== 'ACK') return undefined;
   if (!entry.payload || typeof entry.payload !== 'object' || Array.isArray(entry.payload)) return undefined;
-  const top = topKeyAndId(entry.payload as Record<string, unknown>);
+  const top = topKeyAndId(unwrapSenderWrapper(entry.payload as Record<string, unknown>));
   if (!top || top.id === undefined) return undefined;
   const kind = KIND_FROM_TOP_KEY[top.key.toUpperCase()];
   if (!kind) return undefined;

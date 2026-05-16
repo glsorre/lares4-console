@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 mod commands;
 mod keychain;
 mod license;
+mod ws;
 
 fn app_config_dir() -> Result<PathBuf, String> {
     let base =
@@ -149,7 +150,10 @@ pub fn run() {
             commands::save_license_token,
             commands::read_all_licenses,
             commands::clear_license,
-            commands::complete_license_migration
+            commands::complete_license_migration,
+            ws::ws_connect,
+            ws::ws_send,
+            ws::ws_close
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

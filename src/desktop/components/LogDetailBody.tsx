@@ -223,18 +223,6 @@ function formatFieldValue(value: unknown, t: (k: string) => string): string {
   return safeJson(value);
 }
 
-function resultChipClass(detail: string | undefined): string {
-  if (!detail) return 'bg-muted text-muted-foreground ring-border/50';
-  const upper = detail.toUpperCase();
-  if (upper === 'OK' || upper === '0X00' || upper === '0' || upper.endsWith('_OK')) {
-    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30';
-  }
-  if (upper.includes('TIMEOUT') || upper.includes('PENDING')) {
-    return 'bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30';
-  }
-  return 'bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30';
-}
-
 const accentSectionClasses =
   'border-border/50 ring-1 ring-[oklch(var(--accent)/0.08)] relative overflow-hidden rounded-lg border bg-background/55 p-3 before:pointer-events-none before:absolute before:inset-x-3 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-[oklch(var(--accent)/0.45)] before:to-transparent';
 
@@ -289,8 +277,8 @@ function DecodedPanel({ decoded }: { decoded: DecodedPayload }) {
             {decoded.resultDetail && (
               <span
                 className={cn(
-                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs ring-1',
-                  resultChipClass(decoded.resultDetail),
+                  'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-xs',
+                  ackResultChipClasses(decoded.resultDetail),
                 )}
                 title={decoded.resultDetailDescription}
               >

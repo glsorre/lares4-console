@@ -55,15 +55,25 @@ const PAYLOAD_TYPE_DOC: Record<string, string> = {
   SYSTEM: 'System subtree',
 };
 
-const RESULT_DETAIL_DOC: Record<string, string> = {
-  OK: 'Command accepted',
-  TIMEOUT: 'No response in time window',
-  UNAUTHORIZED: 'PIN/permission denied',
-  INVALID_PARAMETER: 'Bad argument',
-  INVALID_PAYLOAD_TYPE: 'Unknown PAYLOAD_TYPE',
-  INVALID_CMD: 'Unknown CMD',
-  INTERNAL_ERROR: 'Panel-side fault',
-  NOT_ALLOWED: 'Operation refused by policy',
+export type ResultSeverity = 'success' | 'pending' | 'error';
+
+interface ResultDetailEntry {
+  description: string;
+  severity: ResultSeverity;
+}
+
+const RESULT_DETAIL_DOC: Record<string, ResultDetailEntry> = {
+  OK: { description: 'Command accepted', severity: 'success' },
+  CMD_PROCESSED: { description: 'Command fully executed', severity: 'success' },
+  CMD_NOT_AVAILABLE: { description: 'Command not supported', severity: 'error' },
+  TIMEOUT: { description: 'No response in time window', severity: 'pending' },
+  PENDING: { description: 'Awaiting panel response', severity: 'pending' },
+  UNAUTHORIZED: { description: 'PIN/permission denied', severity: 'error' },
+  INVALID_PARAMETER: { description: 'Bad argument', severity: 'error' },
+  INVALID_PAYLOAD_TYPE: { description: 'Unknown PAYLOAD_TYPE', severity: 'error' },
+  INVALID_CMD: { description: 'Unknown CMD', severity: 'error' },
+  INTERNAL_ERROR: { description: 'Panel-side fault', severity: 'error' },
+  NOT_ALLOWED: { description: 'Operation refused by policy', severity: 'error' },
 };
 
 const KNOWN_TOP_KEYS: ReadonlySet<string> = new Set(['CMD', 'PAYLOAD_TYPE', 'PAYLOAD', 'ID', 'SENDER', 'TIMESTAMP', 'PIN']);
@@ -80,7 +90,17 @@ export function describePayloadType(type: string | undefined): string | undefine
 
 export function describeResultDetail(detail: string | undefined): string | undefined {
   if (!detail) return undefined;
-  return RESULT_DETAIL_DOC[detail.toUpperCase()];
+  return RESULT_DETAIL_DOC[detail.toUpperCase()]?.description;
+}
+
+export function resultDetailSeverity(detail: string | undefined): ResultSeverity | undefined {
+  if (!detail) return undefined;
+  const upper = detail.toUpperCase();
+  const entry = RESULT_DETAIL_DOC[upper];
+  if (entry) return entry.severity;
+  if (upper === '0X00' || upper === '0' || upper.endsWith('_OK')) return 'success';
+  if (upper.includes('TIMEOUT') || upper.includes('PENDING')) return 'pending';
+  return 'error';
 }
 
 function asString(v: unknown): string | undefined {

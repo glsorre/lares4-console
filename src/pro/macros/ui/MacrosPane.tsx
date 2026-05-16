@@ -1,9 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // See LICENSE in this directory.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Circle, MoreHorizontal, Pause, Play, Plus, Square, Trash2, Zap } from 'lucide-react';
+import {
+  Check,
+  Circle,
+  Copy,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Plus,
+  RotateCcw,
+  SkipForward,
+  Square,
+  Trash2,
+  X,
+  Zap,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -29,7 +43,7 @@ import { ProFeatureLock } from '@/desktop/components/ProFeatureLock';
 import { PaneEmpty } from '@/desktop/components/PaneEmpty.js';
 import { useSessionController } from '@pro/tabs/context.js';
 import { useConnectionStatus, useMacrosSlice } from '@/desktop/runtime/session-store.js';
-import type { Macro } from '@pro/macros/types.js';
+import type { Macro, MacroStep } from '@pro/macros/types.js';
 import { MacroEditorDialog } from '@pro/macros/ui/MacroEditorDialog.js';
 
 interface MacrosPaneProps {
@@ -37,10 +51,33 @@ interface MacrosPaneProps {
   onLicenseChanged?: () => void;
 }
 
+function previewSteps(steps: MacroStep[]): string {
+  const trimmed = steps.map((s) => s.command.trim()).filter((c) => c.length > 0);
+  const head = trimmed.slice(0, 3).join(' · ');
+  return trimmed.length > 3 ? `${head} · …` : head;
+}
+
+function useElapsedSeconds(startedAt: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === undefined) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  if (startedAt === undefined) return 0;
+  return Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
 export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
   const { t } = useTranslation();
   const { controller } = useSessionController();
-  const { macros, activeMacro, recordingMacro: recording, recordingMacroSteps: recordingSteps } = useMacrosSlice();
+  const {
+    macros,
+    activeMacro,
+    recordingMacro: recording,
+    recordingMacroSteps: recordingSteps,
+    recordingMacroStartedAt,
+  } = useMacrosSlice();
   const { connected } = useConnectionStatus();
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -48,6 +85,7 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
   const [deleteMacroId, setDeleteMacroId] = useState<string | null>(null);
   const [recordingName, setRecordingName] = useState('');
   const [recordingNameOpen, setRecordingNameOpen] = useState(false);
+  const elapsedSec = useElapsedSeconds(recordingMacroStartedAt);
 
   if (!isLicensed) {
     return (
@@ -74,6 +112,13 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
     setEditorOpen(true);
   }
 
+  const activePct = activeMacro && activeMacro.total > 0
+    ? Math.round((activeMacro.position / activeMacro.total) * 100)
+    : 0;
+  const activeEnded = activeMacro
+    ? activeMacro.status === 'paused' && activeMacro.position >= activeMacro.total
+    : false;
+
   return (
     <Card className="bg-pane/70 text-card-foreground border-border/60 flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm ring-1 ring-border/40">
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-3">
@@ -91,56 +136,92 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
           </Button>
         </div>
         {activeMacro && (
-          <div className="bg-muted/40 border-border/60 flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs">
-            <span className="truncate font-mono">
-              {activeMacro.name} · {activeMacro.position}/{activeMacro.total} · {activeMacro.status}
-            </span>
-            <span className="flex items-center gap-0.5">
-              {activeMacro.status === 'playing' ? (
-                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.pauseMacro()} aria-label={t('pro.macros.pauseMacro')}>
-                  <Pause className="size-3.5" aria-hidden />
+          <div className="bg-muted/40 border-border/60 flex flex-col gap-1 rounded-md border px-2 py-1.5">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate font-medium">{activeMacro.name}</span>
+                <span className="text-muted-foreground font-mono tabular-nums">
+                  {t('pro.macros.stepLabel', { position: activeMacro.position, total: activeMacro.total })}
+                  {' · '}
+                  {activeMacro.status}
+                </span>
+              </span>
+              <span className="flex items-center gap-0.5">
+                {activeMacro.status === 'playing' ? (
+                  <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.pauseMacro()} aria-label={t('pro.macros.pauseMacro')}>
+                    <Pause className="size-3.5" aria-hidden />
+                  </Button>
+                ) : activeEnded ? (
+                  <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.runMacro(activeMacro.id)} aria-label={t('pro.macros.restart')} disabled={!connected}>
+                    <RotateCcw className="size-3.5" aria-hidden />
+                  </Button>
+                ) : (
+                  <>
+                    <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.resumeMacro()} aria-label={t('pro.macros.resumeMacro')} disabled={!connected}>
+                      <Play className="size-3.5" aria-hidden />
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.stepMacro()} aria-label={t('pro.macros.stepOne')} disabled={!connected}>
+                      <SkipForward className="size-3.5" aria-hidden />
+                    </Button>
+                  </>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="size-6 p-0"
+                  onClick={() => controller.stopMacro()}
+                  aria-label={activeEnded ? t('pro.macros.dismiss') : t('pro.macros.stopMacro')}
+                >
+                  {activeEnded ? <X className="size-3.5" aria-hidden /> : <Square className="size-3.5" aria-hidden />}
                 </Button>
-              ) : activeMacro.position < activeMacro.total ? (
-                <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.resumeMacro()} aria-label={t('pro.macros.resumeMacro')}>
-                  <Play className="size-3.5" aria-hidden />
-                </Button>
-              ) : null}
-              <Button type="button" variant="ghost" size="sm" className="size-6 p-0" onClick={() => controller.stopMacro()} aria-label={t('pro.macros.stopMacro')}>
-                <Square className="size-3.5" aria-hidden />
-              </Button>
-            </span>
+              </span>
+            </div>
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={activeMacro.total}
+              aria-valuenow={activeMacro.position}
+              aria-label={t('pro.macros.progressAria', { position: activeMacro.position, total: activeMacro.total })}
+              className="bg-border/50 h-0.5 w-full overflow-hidden rounded-full"
+            >
+              <div className="bg-primary/70 h-full rounded-full transition-[width] duration-200" style={{ width: `${activePct}%` }} />
+            </div>
           </div>
         )}
 
         {recording && (
           <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs">
             <span className="flex items-center gap-1.5">
-              <Circle className="size-2.5 fill-current" aria-hidden />
-              {t('pro.macros.recordingSteps', { count: recordingSteps })}
+              <Circle className="size-2.5 fill-current animate-pulse" aria-hidden />
+              {t('pro.macros.recordingMeta', { count: recordingSteps, elapsed: elapsedSec })}
             </span>
-            <span className="flex items-center gap-0.5">
+            <span className="flex items-center gap-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="size-6 p-0"
+                className="text-destructive hover:bg-destructive/15 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
                 onClick={() => {
                   setRecordingName('');
                   setRecordingNameOpen(true);
                 }}
                 aria-label={t('pro.macros.stopRecording')}
+                disabled={recordingSteps === 0}
               >
-                <Check className="size-3.5" aria-hidden />
+                <Check className="size-3" aria-hidden />
+                {t('pro.macros.recStopSave')}
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="size-6 p-0"
+                className="text-destructive hover:bg-destructive/15 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
                 onClick={() => controller.cancelRecordingMacro()}
                 aria-label={t('pro.macros.cancelRecording')}
               >
-                <Trash2 className="size-3.5" aria-hidden />
+                <Trash2 className="size-3" aria-hidden />
+                {t('pro.macros.recDiscard')}
               </Button>
             </span>
           </div>
@@ -160,7 +241,8 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
           ) : (
             <ul className="flex flex-col gap-1.5">
               {macros.map((m) => {
-                const isActive = activeMacro?.name === m.name;
+                const isActive = activeMacro?.id === m.id;
+                const preview = previewSteps(m.steps);
                 return (
                   <li key={m.id}>
                     <div className={cn(
@@ -169,7 +251,13 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                     )}>
                       <div className="min-w-0 flex-1">
                         <p className="text-foreground truncate text-sm font-medium leading-tight">{m.name}</p>
+                        {m.description && (
+                          <p className="text-muted-foreground truncate text-xs leading-tight">{m.description}</p>
+                        )}
                         <p className="text-muted-foreground text-xs">{t('pro.macros.steps', { count: m.steps.length })}</p>
+                        {preview && (
+                          <p className="text-muted-foreground/70 truncate font-mono text-[11px] leading-tight">{preview}</p>
+                        )}
                       </div>
                       <Button
                         type="button"
@@ -190,6 +278,10 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="text-xs">
                           <DropdownMenuItem onSelect={() => openEdit(m)}>{t('pro.macros.edit')}</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => { void controller.duplicateMacro(m.id); }}>
+                            <Copy className="size-3" aria-hidden />
+                            {t('pro.macros.duplicate')}
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteMacroId(m.id)}>
                             <Trash2 className="size-3" aria-hidden />
@@ -209,13 +301,13 @@ export function MacrosPane({ isLicensed, onLicenseChanged }: MacrosPaneProps) {
           <div className="border-border/60 flex items-center justify-end border-t pt-2">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs"
               onClick={() => controller.startRecordingMacro()}
               disabled={activeMacro !== undefined || !connected}
             >
-              <Circle className="size-3" aria-hidden />
+              <Circle className="text-destructive size-3 fill-current" aria-hidden />
               {t('pro.macros.record')}
             </Button>
           </div>

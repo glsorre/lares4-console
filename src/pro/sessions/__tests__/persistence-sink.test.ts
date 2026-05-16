@@ -52,6 +52,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     activeMacro: undefined,
     recordingMacro: false,
     recordingMacroSteps: 0,
+    recordingMacroStartedAt: undefined,
     topology: { groups: [], total: 0 },
     topologyDiff: { addedIds: new Set(), removedIds: new Set() },
     bookmarks: [],

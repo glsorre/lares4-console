@@ -29,6 +29,7 @@ describe('ackResultChipClasses', () => {
     assert.match(ackResultChipClasses('0x00'), /emerald/);
     assert.match(ackResultChipClasses('0'), /emerald/);
     assert.match(ackResultChipClasses('LOGIN_OK'), /emerald/);
+    assert.match(ackResultChipClasses('CMD_PROCESSED'), /emerald/);
   });
 
   it('returns amber for timeout/pending', () => {

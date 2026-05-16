@@ -72,6 +72,8 @@ export const ConnectionProfileSchema = v.object({
   macros: v.optional(v.array(MacroSchema)),
   triggers: v.optional(v.array(TriggerRuleSchema)),
   readOnly: v.optional(v.boolean()),
+  /** Bypass TLS certificate validation (self-signed panels) — routes through the Tauri WS bridge. */
+  acceptInvalidCerts: v.optional(v.boolean()),
 });
 
 export const ProfilesFileSchema = v.object({

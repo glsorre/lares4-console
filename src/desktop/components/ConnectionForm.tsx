@@ -14,6 +14,7 @@ export interface ConnectionFormValues {
   name: string;
   sender: string;
   wss: boolean;
+  acceptInvalidCerts: boolean;
   readOnly: boolean;
   saveAsDefault: boolean;
 }
@@ -51,10 +52,20 @@ export function ConnectionForm({
   const [name, setName] = useState(initial.name);
   const [sender, setSender] = useState(initial.sender);
   const [wss, setWss] = useState(initial.wss);
+  const [acceptInvalidCerts, setAcceptInvalidCerts] = useState(initial.acceptInvalidCerts);
   const [readOnly, setReadOnly] = useState(initial.readOnly);
   const [saveAsDefault, setSaveAsDefault] = useState(initial.saveAsDefault);
 
-  const values: ConnectionFormValues = { ip, pin, name, sender, wss, readOnly, saveAsDefault };
+  const values: ConnectionFormValues = {
+    ip,
+    pin,
+    name,
+    sender,
+    wss,
+    acceptInvalidCerts: wss && acceptInvalidCerts,
+    readOnly,
+    saveAsDefault,
+  };
   const connectDisabled = isConnecting || !ip.trim() || !pin.trim();
   const saveConnectDisabled = connectDisabled || !name.trim() || saving;
 
@@ -114,6 +125,25 @@ export function ConnectionForm({
             <Checkbox id="sb-wss" checked={wss} onCheckedChange={(c) => setWss(c === true)} className="size-3.5" />
             <Label htmlFor="sb-wss" className="text-xs font-normal leading-none">{t('connect.wss')}</Label>
           </div>
+          <div className={cn('flex items-center gap-1.5', !wss && 'opacity-50')}>
+            <Checkbox
+              id="sb-accept-invalid-certs"
+              checked={wss && acceptInvalidCerts}
+              disabled={!wss}
+              onCheckedChange={(c) => setAcceptInvalidCerts(c === true)}
+              className="size-3.5"
+            />
+            <Label htmlFor="sb-accept-invalid-certs" className="text-xs font-normal leading-none">
+              {t('connect.acceptInvalidCerts')}
+            </Label>
+          </div>
+          {wss && acceptInvalidCerts && (
+            <Alert variant="destructive" className="py-2">
+              <AlertDescription className="text-[11px] leading-snug">
+                {t('connect.acceptInvalidCertsWarn')}
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex items-center gap-1.5">
             <Checkbox id="sb-readonly" checked={readOnly} onCheckedChange={(c) => setReadOnly(c === true)} className="size-3.5" />
             <Label htmlFor="sb-readonly" className="text-xs font-normal leading-none">{t('connect.readOnlyOnConnect')}</Label>

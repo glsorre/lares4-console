@@ -90,6 +90,7 @@ export class DesktopProfilesRepository {
     macros?: Macro[];
     triggers?: TriggerRule[];
     readOnly?: boolean;
+    acceptInvalidCerts?: boolean;
   }): Promise<void> {
     const data = await this.readAll();
     const ts = nowIso();
@@ -107,6 +108,8 @@ export class DesktopProfilesRepository {
       macros: input.macros !== undefined ? input.macros : prev?.macros,
       triggers: input.triggers !== undefined ? input.triggers : prev?.triggers,
       readOnly: input.readOnly !== undefined ? input.readOnly : prev?.readOnly,
+      acceptInvalidCerts:
+        input.acceptInvalidCerts !== undefined ? input.acceptInvalidCerts : prev?.acceptInvalidCerts,
     };
     const profile = v.parse(ConnectionProfileSchema, candidate);
     if (idx >= 0) data.profiles[idx] = profile;

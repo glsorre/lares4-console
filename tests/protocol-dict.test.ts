@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodePayload, describeCmd, describeResultDetail } from '../src/core/protocol-dict.js';
+import {
+  decodePayload,
+  describeCmd,
+  describeResultDetail,
+  resultDetailSeverity,
+} from '../src/core/protocol-dict.js';
 
 describe('protocol-dict', () => {
   it('describeCmd returns description for known CMD', () => {
@@ -11,6 +16,21 @@ describe('protocol-dict', () => {
   it('describeResultDetail handles common detail codes', () => {
     assert.ok(describeResultDetail('TIMEOUT'));
     assert.ok(describeResultDetail('UNAUTHORIZED'));
+    assert.ok(describeResultDetail('CMD_PROCESSED'));
+  });
+
+  it('resultDetailSeverity classifies known and unknown details', () => {
+    assert.equal(resultDetailSeverity('OK'), 'success');
+    assert.equal(resultDetailSeverity('CMD_PROCESSED'), 'success');
+    assert.equal(resultDetailSeverity('LOGIN_OK'), 'success');
+    assert.equal(resultDetailSeverity('0x00'), 'success');
+    assert.equal(resultDetailSeverity('TIMEOUT'), 'pending');
+    assert.equal(resultDetailSeverity('PENDING'), 'pending');
+    assert.equal(resultDetailSeverity('UNAUTHORIZED'), 'error');
+    assert.equal(resultDetailSeverity('CMD_NOT_AVAILABLE'), 'error');
+    assert.equal(resultDetailSeverity('SOMETHING_UNKNOWN'), 'error');
+    assert.equal(resultDetailSeverity(undefined), undefined);
+    assert.equal(resultDetailSeverity(''), undefined);
   });
 
   it('decodePayload pulls CMD and PAYLOAD_TYPE', () => {
