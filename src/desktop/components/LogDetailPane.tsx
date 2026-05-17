@@ -74,10 +74,10 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
     }
     try {
       const parsed = JSON.parse(activeContent) as unknown;
-      if (effectiveMode === 'json') return safeJson(parsed);
-      return prettyLines(parsed, 0).join('\n');
+      const formatted = effectiveMode === 'json' ? safeJson(parsed) : prettyLines(parsed, 0).join('\n');
+      return redactSecrets(formatted);
     } catch {
-      return activeContent;
+      return redactSecrets(activeContent);
     }
   }, [selected, activePayload, activeContent, effectiveMode]);
 
@@ -100,7 +100,7 @@ export function LogDetailPane({ entries, selectedId, outputFormat, onFormatChang
         : prettyLines(wirePayload, 0).join('\n');
       return redactSecrets(formatted);
     }
-    return wire.content;
+    return redactSecrets(wire.content);
   }, [selected, effectiveMode]);
 
   const lineCount = rendered ? rendered.split('\n').length : 0;

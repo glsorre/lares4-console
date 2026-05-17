@@ -47,6 +47,31 @@ describe('protocol-dict', () => {
     assert.equal(pinField?.value, '***');
   });
 
+  it('decodePayload redacts PIN nested inside PAYLOAD', () => {
+    const d = decodePayload({ CMD: 'CMD_LOGIN', PAYLOAD: { PIN: '1234', USER: 'u' } });
+    const pinField = d?.innerFields.find((f) => f.key === 'PIN');
+    assert.equal(pinField?.value, '***');
+    const userField = d?.innerFields.find((f) => f.key === 'USER');
+    assert.equal(userField?.value, 'u');
+  });
+
+  it('decodePayload redacts PIN nested deep inside structured values', () => {
+    const d = decodePayload({
+      CMD: 'CMD_LOGIN',
+      PAYLOAD: { AUTH: { PIN: '9999', SESSION: 'abc' }, LIST: [{ pin: '7777' }] },
+    });
+    const auth = d?.innerFields.find((f) => f.key === 'AUTH');
+    assert.deepEqual(auth?.value, { PIN: '***', SESSION: 'abc' });
+    const list = d?.innerFields.find((f) => f.key === 'LIST');
+    assert.deepEqual(list?.value, [{ pin: '***' }]);
+  });
+
+  it('decodePayload redacts PIN at top level regardless of key casing', () => {
+    const d = decodePayload({ pin: '1234' });
+    const pinField = d?.topFields.find((f) => f.key.toUpperCase() === 'PIN');
+    assert.equal(pinField?.value, '***');
+  });
+
   it('decodePayload surfaces RESULT_DETAIL from inner PAYLOAD', () => {
     const d = decodePayload({
       CMD: 'CMD_USR_RES',

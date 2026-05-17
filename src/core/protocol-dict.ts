@@ -107,6 +107,22 @@ function asString(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+/** Recursively replace any value keyed `PIN` (case-insensitive) with `'***'`.
+ *  Preserves structure for non-sensitive keys; safe on cycles via WeakSet guard. */
+function redactPayloadValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactPayloadValue(item, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = k.toUpperCase() === 'PIN' ? '***' : redactPayloadValue(v, seen);
+  }
+  return out;
+}
+
 export function decodePayload(payload: unknown): DecodedPayload | undefined {
   if (!payload || typeof payload !== 'object') return undefined;
   const obj = payload as Record<string, unknown>;
@@ -115,11 +131,11 @@ export function decodePayload(payload: unknown): DecodedPayload | undefined {
   const topFields: DecodedField[] = [];
   for (const [k, v] of Object.entries(obj)) {
     if (k === 'PAYLOAD') continue;
-    if (k === 'PIN') {
+    if (k.toUpperCase() === 'PIN') {
       topFields.push({ key: k, value: '***', description: 'Authentication PIN (redacted)' });
       continue;
     }
-    topFields.push({ key: k, value: v });
+    topFields.push({ key: k, value: redactPayloadValue(v) });
   }
   const inner = obj.PAYLOAD;
   let resultDetail: string | undefined;
@@ -127,7 +143,11 @@ export function decodePayload(payload: unknown): DecodedPayload | undefined {
   if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
     for (const [k, v] of Object.entries(inner as Record<string, unknown>)) {
       if (k === 'RESULT_DETAIL') resultDetail = asString(v);
-      innerFields.push({ key: k, value: v });
+      if (k.toUpperCase() === 'PIN') {
+        innerFields.push({ key: k, value: '***', description: 'Authentication PIN (redacted)' });
+        continue;
+      }
+      innerFields.push({ key: k, value: redactPayloadValue(v) });
     }
   }
   const unknown = !cmd && !payloadType && topFields.every((f) => !KNOWN_TOP_KEYS.has(f.key));

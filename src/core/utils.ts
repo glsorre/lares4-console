@@ -9,6 +9,8 @@ export function redactSecrets(value: string): string {
   out = out.replace(/("PIN"\s*:\s*)("[^"]*"|[^",}\s]+)/gi, '$1"***"');
   out = out.replace(/\bpin\s*=\s*([^\s,]+)/gi, 'pin=***');
   out = out.replace(/\bpin:\s*([^\s,]+)/gi, 'pin:***');
+  out = out.replace(/("pin"\s*=>\s*)("[^"]*"|[^",}\s]+)/gi, '$1"***"');
+  out = out.replace(/\bPIN\s+(\d{3,10})\b/g, 'PIN ***');
   out = out.replace(/("ID_LOGIN"\s*:\s*)("[^"]*"|[^",}\s]+)/gi, '$1"***"');
   out = out.replace(/("TOKEN"\s*:\s*)("[^"]*"|[^",}\s]+)/gi, '$1"***"');
   return out;
