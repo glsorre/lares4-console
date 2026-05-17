@@ -1,6 +1,6 @@
 {
   "name": "lares4-console",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Desktop debug console for Lares4 panels (Tauri + lares4-ts)",
   "private": true,
   "type": "module",
