@@ -12,6 +12,8 @@ const ALLOWED_FEATURE_IDS: &[&str] = &[
     "multiwindow",
 ];
 
+const MIGRATED_SLOT: &str = "_migrated";
+
 #[tauri::command]
 pub fn verify_license_token(raw: String, feature_id: String) -> VerifyResult {
     let probe_feature = if feature_id == "bundle" {
@@ -37,52 +39,98 @@ pub fn save_license_token(feature_id: String, raw: String) -> VerifyResult {
         return result;
     }
     let payload = result.payload.as_ref().expect("ok result has payload");
+
+    let mut map = match load_bundle() {
+        Ok(map) => map,
+        Err(e) => return VerifyResult::err(leak_static(e)),
+    };
+
     if payload.f == "*" {
-        if let Err(e) = keychain::write("license:bundle", &raw) {
-            return VerifyResult::err(leak_static(e));
-        }
+        map.insert("bundle".to_string(), raw.clone());
         if feature_id != "bundle" {
-            if let Some(account) = keychain::account_for_feature(&feature_id) {
-                let _ = keychain::delete(account);
-            }
+            map.remove(feature_id.as_str());
         }
     } else {
-        let Some(account) = keychain::account_for_feature(&payload.f) else {
+        let Some(slot) = keychain::slot_for_feature(&payload.f) else {
             return VerifyResult::err("malformed-payload");
         };
-        if let Err(e) = keychain::write(account, &raw) {
-            return VerifyResult::err(leak_static(e));
-        }
+        map.insert(slot.to_string(), raw.clone());
+    }
+
+    if let Err(e) = store_bundle(&map) {
+        return VerifyResult::err(leak_static(e));
     }
     result
 }
 
 #[tauri::command]
 pub fn read_all_licenses() -> Result<HashMap<String, String>, String> {
-    let mut out = HashMap::new();
-    for account in keychain::ACCOUNTS {
-        if let Some(secret) = keychain::read(account)? {
-            let short = account.strip_prefix("license:").unwrap_or(account).to_string();
-            out.insert(short, secret);
-        }
-    }
-    if let Some(marker) = keychain::read(keychain::MIGRATED_MARKER)? {
-        out.insert("_migrated".to_string(), marker);
-    }
-    Ok(out)
+    load_bundle()
 }
 
 #[tauri::command]
 pub fn clear_license(feature_id: String) -> Result<(), String> {
-    let Some(account) = keychain::account_for_feature(&feature_id) else {
+    let Some(slot) = keychain::slot_for_feature(&feature_id) else {
         return Err(format!("Unknown feature id: {feature_id}"));
     };
-    keychain::delete(account)
+    let mut map = load_bundle()?;
+    map.remove(slot);
+    store_bundle(&map)
 }
 
 #[tauri::command]
 pub fn complete_license_migration() -> Result<(), String> {
-    keychain::write(keychain::MIGRATED_MARKER, "1")
+    let mut map = load_bundle()?;
+    map.insert(MIGRATED_SLOT.to_string(), "1".to_string());
+    store_bundle(&map)
+}
+
+/// Load the aggregated license map. Reads the v2 bundle entry if it exists,
+/// otherwise performs a one-shot migration from the legacy per-feature entries
+/// (collected into the bundle, then the legacy entries are deleted so future
+/// launches hit at most one keychain ACL prompt).
+fn load_bundle() -> Result<HashMap<String, String>, String> {
+    if let Some(raw) = keychain::read_bundle()? {
+        return Ok(parse_bundle(&raw));
+    }
+
+    let mut map: HashMap<String, String> = HashMap::new();
+    for account in keychain::LEGACY_ACCOUNTS {
+        if let Some(secret) = keychain::read(account)? {
+            if let Some(slot) = keychain::slot_from_legacy_account(account) {
+                map.insert(slot.to_string(), secret);
+            }
+        }
+    }
+    if let Some(marker) = keychain::read(keychain::LEGACY_MIGRATED_MARKER)? {
+        map.insert(MIGRATED_SLOT.to_string(), marker);
+    }
+
+    if !map.is_empty() {
+        keychain::write_bundle(&serialize_bundle(&map))?;
+        for account in keychain::LEGACY_ACCOUNTS {
+            let _ = keychain::delete(account);
+        }
+        let _ = keychain::delete(keychain::LEGACY_MIGRATED_MARKER);
+    }
+
+    Ok(map)
+}
+
+fn store_bundle(map: &HashMap<String, String>) -> Result<(), String> {
+    if map.is_empty() {
+        keychain::delete_bundle()
+    } else {
+        keychain::write_bundle(&serialize_bundle(map))
+    }
+}
+
+fn parse_bundle(raw: &str) -> HashMap<String, String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn serialize_bundle(map: &HashMap<String, String>) -> String {
+    serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Best-effort conversion of a runtime keychain error into one of the

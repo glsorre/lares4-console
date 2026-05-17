@@ -2,7 +2,14 @@ use keyring::{Entry, Error as KeyringError};
 
 const SERVICE: &str = "me.rightright.lares4console";
 
-pub const ACCOUNTS: &[&str] = &[
+/// Single aggregated keychain entry. All license tokens (and the migration
+/// marker) are stored as a JSON map under this account so a fresh DMG install
+/// triggers at most one macOS keychain ACL prompt on first launch.
+pub const BUNDLE_ACCOUNT: &str = "licenses:v2";
+
+/// Legacy per-feature accounts. Read once on first run for migration into the
+/// v2 bundle entry, then deleted. Do not write to these after migration.
+pub const LEGACY_ACCOUNTS: &[&str] = &[
     "license:bundle",
     "license:macros",
     "license:tabs",
@@ -11,16 +18,30 @@ pub const ACCOUNTS: &[&str] = &[
     "license:multiwindow",
 ];
 
-pub const MIGRATED_MARKER: &str = "license:_migrated";
+pub const LEGACY_MIGRATED_MARKER: &str = "license:_migrated";
 
-pub fn account_for_feature(feature_id: &str) -> Option<&'static str> {
+/// Short slot name embedded in the bundle JSON map. Matches the keys the JS
+/// layer expects from `read_all_licenses`.
+pub fn slot_for_feature(feature_id: &str) -> Option<&'static str> {
     match feature_id {
-        "bundle" => Some("license:bundle"),
-        "macros" => Some("license:macros"),
-        "tabs" => Some("license:tabs"),
-        "triggers" => Some("license:triggers"),
-        "annotations" => Some("license:annotations"),
-        "multiwindow" => Some("license:multiwindow"),
+        "bundle" => Some("bundle"),
+        "macros" => Some("macros"),
+        "tabs" => Some("tabs"),
+        "triggers" => Some("triggers"),
+        "annotations" => Some("annotations"),
+        "multiwindow" => Some("multiwindow"),
+        _ => None,
+    }
+}
+
+pub fn slot_from_legacy_account(account: &str) -> Option<&'static str> {
+    match account {
+        "license:bundle" => Some("bundle"),
+        "license:macros" => Some("macros"),
+        "license:tabs" => Some("tabs"),
+        "license:triggers" => Some("triggers"),
+        "license:annotations" => Some("annotations"),
+        "license:multiwindow" => Some("multiwindow"),
         _ => None,
     }
 }
@@ -54,6 +75,18 @@ pub fn delete(account: &str) -> Result<(), String> {
     }
 }
 
+pub fn read_bundle() -> Result<Option<String>, String> {
+    read(BUNDLE_ACCOUNT)
+}
+
+pub fn write_bundle(payload: &str) -> Result<(), String> {
+    write(BUNDLE_ACCOUNT, payload)
+}
+
+pub fn delete_bundle() -> Result<(), String> {
+    delete(BUNDLE_ACCOUNT)
+}
+
 #[cfg(all(test, feature = "keychain-it"))]
 mod it_tests {
     use super::*;
@@ -67,5 +100,18 @@ mod it_tests {
         assert_eq!(read(account).unwrap(), Some("secret-value".to_string()));
         delete(account).unwrap();
         assert_eq!(read(account).unwrap(), None);
+    }
+
+    #[test]
+    fn bundle_round_trip() {
+        let _ = delete_bundle();
+        assert_eq!(read_bundle().unwrap(), None);
+        write_bundle("{\"bundle\":\"LARES4-test\"}").unwrap();
+        assert_eq!(
+            read_bundle().unwrap(),
+            Some("{\"bundle\":\"LARES4-test\"}".to_string())
+        );
+        delete_bundle().unwrap();
+        assert_eq!(read_bundle().unwrap(), None);
     }
 }

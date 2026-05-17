@@ -7,7 +7,9 @@ import { TabsProvider } from '@pro/tabs/context.js';
 import { WindowsProvider } from '@pro/windows/context.js';
 import { SessionsProvider } from '@pro/sessions/index.js';
 import { bootstrapLicenses } from './runtime/commercial-license-prefs.js';
-import { initI18n } from '../i18n/index.js';
+import { i18n, initI18nSync } from '../i18n/index.js';
+import { detectInitialLocale } from '../i18n/detect-locale.js';
+import { getStoredLanguage } from '../i18n/language-prefs.js';
 import './styles.css';
 
 function render(): void {
@@ -28,16 +30,31 @@ function render(): void {
   );
 }
 
-// Verify any stored license tokens before first render so feature gates are
-// in their correct state. Failures (no key, malformed, expired) resolve to a
-// console warn so the cause is visible in the dev console; the gates stay
-// locked but the system self-heals via `lazyEnsureVerified` on the next
-// `isFeatureLicensed` call.
-void Promise.all([
-  bootstrapLicenses().catch((err) => {
-    console.warn('[license] bootstrap rejected:', err);
-  }),
-  initI18n().catch((err) => {
-    console.warn('[i18n] init rejected:', err);
-  }),
-]).finally(render);
+// First paint must not depend on Tauri IPC: on a fresh DMG install the
+// keychain ACL prompt can stall the WKWebView paint cycle long enough that
+// the user sees a blank window. Initialise i18next synchronously with the
+// English fallback, render immediately, then finish locale detection and
+// license bootstrap in the background. Feature gates self-heal via
+// `notifyLicenseChange` and `lazyEnsureVerified` once bootstrap completes.
+const initialLocale = getStoredLanguage() ?? 'en';
+initI18nSync(initialLocale);
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = initialLocale;
+}
+render();
+
+void detectInitialLocale()
+  .then(async (lng) => {
+    if (lng === initialLocale) return;
+    await i18n.changeLanguage(lng);
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = lng;
+    }
+  })
+  .catch((err) => {
+    console.warn('[i18n] locale detect rejected:', err);
+  });
+
+void bootstrapLicenses().catch((err) => {
+  console.warn('[license] bootstrap rejected:', err);
+});
