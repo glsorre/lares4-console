@@ -26,7 +26,13 @@
     "lint": "eslint . --max-warnings=0",
     "test": "tsx --test --import ./tests/helpers/dom-setup.ts tests/*.test.ts tests/desktop/*.test.tsx src/pro/macros/__tests__/*.test.ts src/pro/macros/__tests__/*.test.tsx src/pro/tabs/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.tsx src/pro/triggers/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.tsx src/pro/annotations/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.tsx src/pro/windows/__tests__/*.test.ts src/pro/windows/__tests__/*.test.tsx src/pro/sessions/__tests__/*.test.ts src/pro/sessions/__tests__/*.test.tsx",
     "test:coverage": "mkdir -p coverage && node --import tsx/esm --import ./tests/helpers/dom-setup.ts --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include='src/**/*.tsx' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=- --test-reporter-destination=./coverage/lcov.info tests/*.test.ts tests/desktop/*.test.tsx src/pro/macros/__tests__/*.test.ts src/pro/macros/__tests__/*.test.tsx src/pro/tabs/__tests__/*.test.ts src/pro/tabs/__tests__/*.test.tsx src/pro/triggers/__tests__/*.test.ts src/pro/triggers/__tests__/*.test.tsx src/pro/annotations/__tests__/*.test.ts src/pro/annotations/__tests__/*.test.tsx src/pro/windows/__tests__/*.test.ts src/pro/windows/__tests__/*.test.tsx src/pro/sessions/__tests__/*.test.ts src/pro/sessions/__tests__/*.test.tsx",
-    "test:ci": "npm run typecheck && npm run lint && npm run test"
+    "test:ci": "npm run typecheck && npm run lint && npm run test",
+    "version:sync": "node scripts/bump-version.mjs",
+    "preversion": "npm run test:ci",
+    "version": "npm run version:sync",
+    "postversion": "git push --follow-tags",
+    "release:beta": "npm version prerelease --preid=beta",
+    "release:rc": "npm version prerelease --preid=rc"
   },
   "dependencies": {
     "@fontsource-variable/quicksand": "^5.2.8",
