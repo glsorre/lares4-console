@@ -115,6 +115,7 @@ export interface SessionSnapshot {
     annotations: boolean;
     multiwindow: boolean;
     sessions: boolean;
+    repl: boolean;
   };
 }
 
@@ -132,6 +133,7 @@ export interface SessionControllerDeps {
   isAnnotationsLicensed?: () => boolean;
   isMultiwindowLicensed?: () => boolean;
   isSessionsLicensed?: () => boolean;
+  isReplLicensed?: () => boolean;
 }
 
 function generateId(): string {
@@ -169,6 +171,7 @@ export class SessionController {
   private readonly isAnnotationsLicensed: () => boolean;
   private readonly isMultiwindowLicensed: () => boolean;
   private readonly isSessionsLicensed: () => boolean;
+  private readonly isReplLicensed: () => boolean;
   private triggers: TriggerRule[] = [];
   private readonly pendingTx = new Map<string, {
     sentAtMs: number;
@@ -212,7 +215,7 @@ export class SessionController {
   private cachedEventFilters: EventFilter[] = [];
   private cachedEventFiltersSize = -1;
   private cachedLicensed: SessionSnapshot['licensed'] = {
-    macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false,
+    macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false, repl: false,
   };
   private cachedLogEntries: LogEntry[] = [];
   private cachedLogEntriesVersion = -1;
@@ -235,6 +238,7 @@ export class SessionController {
     this.isAnnotationsLicensed = deps.isAnnotationsLicensed ?? (() => isFeatureLicensed('annotations'));
     this.isMultiwindowLicensed = deps.isMultiwindowLicensed ?? (() => isFeatureLicensed('multiwindow'));
     this.isSessionsLicensed = deps.isSessionsLicensed ?? (() => isFeatureLicensed('sessions'));
+    this.isReplLicensed = deps.isReplLicensed ?? (() => isFeatureLicensed('repl'));
     this.macroEngine = new MacroEngine(
       async (line) => {
         this.submittingFromMacro = true;
@@ -343,11 +347,12 @@ export class SessionController {
       annotations: this.isAnnotationsLicensed(),
       multiwindow: this.isMultiwindowLicensed(),
       sessions: this.isSessionsLicensed(),
+      repl: this.isReplLicensed(),
     };
     const cur = this.cachedLicensed;
     if (cur.macros === next.macros && cur.tabs === next.tabs && cur.triggers === next.triggers
         && cur.annotations === next.annotations && cur.multiwindow === next.multiwindow
-        && cur.sessions === next.sessions) {
+        && cur.sessions === next.sessions && cur.repl === next.repl) {
       return cur;
     }
     this.cachedLicensed = next;
@@ -515,6 +520,19 @@ export class SessionController {
     this.lastSocketError = undefined;
     this.store.clear();
     this.emit();
+  }
+
+  /** Live `lares4-ts` client for the active session, or `undefined` if not connected. The REPL
+   *  eval-host calls this on every Run so a stale client is never sent to the worker — the
+   *  underlying instance changes across disconnect/reconnect. */
+  getActiveLares(): unknown {
+    return this.lares;
+  }
+
+  /** Log store for the active session. Exposed for the REPL's `waitFor` which subscribes to
+   *  new entries directly rather than diffing the snapshot on every emit. */
+  getLogStore(): LogStore {
+    return this.store;
   }
 
   listTriggers(): TriggerRule[] {

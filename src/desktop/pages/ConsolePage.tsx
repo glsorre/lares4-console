@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Bell, Bookmark as BookmarkIcon, FileSearch, Lock, PanelRightClose, Search, Zap } from 'lucide-react';
+import { Bell, Bookmark as BookmarkIcon, FileSearch, Lock, PanelRightClose, Search, Terminal, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +21,7 @@ import { RecentActivityPane, collectRecentDeviceIds } from '../components/Recent
 import { TopologyPane } from '../components/TopologyPane.js';
 import { TriggersPane } from '@pro/triggers/ui/TriggersPane.js';
 import { MacrosPane } from '@pro/macros/ui/MacrosPane.js';
+import { ReplPane } from '@pro/repl/ui/ReplPane.js';
 import { useWideLayout } from '../hooks/use-wide-layout.js';
 import { showSaveDialog } from '../runtime/tauri-fs.js';
 import { useSessionController } from '@pro/tabs/context.js';
@@ -41,7 +42,7 @@ import { compileChipFilters } from '../../core/log-query.js';
 import type { LayoutOutletContext } from '../AppLayout.js';
 import type { FeatureId } from '../runtime/commercial-license-prefs.js';
 
-type DetailTab = 'detail' | 'bookmarks' | 'triggers' | 'macros';
+type DetailTab = 'detail' | 'bookmarks' | 'triggers' | 'macros' | 'script';
 
 const TOPOLOGY_RAIL_KEY = 'lares4.topologyRailOpen';
 const LEGACY_LOG_SOURCE_FILTER_KEY = 'lares4.logSourceFilter';
@@ -203,6 +204,7 @@ export function ConsolePage() {
   }
 
   const macrosLicensed = licensed.macros;
+  const replLicensed = licensed.repl;
   const enabledTriggerCount = triggers.filter((r) => r.enabled).length;
 
   const detailTabs = useMemo(() => {
@@ -235,6 +237,12 @@ export function ConsolePage() {
         badge: macros.length || undefined,
         lockFeature: macrosLicensed ? undefined : 'macros',
       },
+      {
+        value: 'script',
+        label: t('consolePage.tabScript'),
+        icon: Terminal,
+        lockFeature: replLicensed ? undefined : 'repl',
+      },
     ];
     return tabs;
   }, [
@@ -245,6 +253,7 @@ export function ConsolePage() {
     annotationsLicensed,
     triggersLicensed,
     macrosLicensed,
+    replLicensed,
   ]);
 
   function handleTabChange(value: string) {
@@ -339,6 +348,18 @@ export function ConsolePage() {
             title={t('consolePage.macrosProTitle')}
             description={t('consolePage.macrosProDesc')}
             onUnlock={() => setLockFeature('macros')}
+          />
+        )}
+      </TabsContent>
+      <TabsContent value="script" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {replLicensed ? (
+          <ReplPane />
+        ) : (
+          <FeatureGateEmptyState
+            featureId="repl"
+            title={t('consolePage.replProTitle')}
+            description={t('consolePage.replProDesc')}
+            onUnlock={() => setLockFeature('repl')}
           />
         )}
       </TabsContent>

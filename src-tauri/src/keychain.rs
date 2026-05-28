@@ -30,6 +30,8 @@ pub fn slot_for_feature(feature_id: &str) -> Option<&'static str> {
         "triggers" => Some("triggers"),
         "annotations" => Some("annotations"),
         "multiwindow" => Some("multiwindow"),
+        "sessions" => Some("sessions"),
+        "repl" => Some("repl"),
         _ => None,
     }
 }

@@ -160,6 +160,30 @@
         "cancel": "Cancel"
       }
     },
+    "repl": {
+      "label": "Script",
+      "run": "Run",
+      "stop": "Stop",
+      "clear": "Clear",
+      "snippets": "Snippets",
+      "snippetsTitle": "Snippets",
+      "snippetsDescription": "Saved JavaScript snippets — click a row to load it into the input.",
+      "snippetsEmpty": "No snippets yet. Type code in the input, then save it here.",
+      "snippetsSaveLabel": "Save current input as",
+      "snippetsNamePlaceholder": "zone-walk-test",
+      "snippetsDelete": "Delete snippet",
+      "snippetsLoaded": "Loaded snippet: {{name}}",
+      "scratchpadLoad": "Load scratchpad",
+      "scratchpadSave": "Save scratchpad",
+      "scratchpadLoaded": "Loaded from {{path}}",
+      "scratchpadSaved": "Saved to {{path}}",
+      "expertBadge": "Expert",
+      "expertBadgeTooltip": "Script console bypasses read-only mode. Be careful — frames are sent to the real panel.",
+      "inputPlaceholder": "await client.zone(3) — Enter to run, Shift+Enter for newline",
+      "inputHint": "client, sleep, print, waitFor are bound. Stop terminates the worker.",
+      "scrollbackEmpty": "Type a JavaScript snippet. Try: await client.lights",
+      "disconnected": "Connect a panel before running scripts."
+    },
     "triggers": {
       "addRule": "Add rule",
       "proNotice": "Triggers are a commercial feature. Stored rules are shown below in read-only mode; live evaluation is paused. Unlock to edit and run them.",
@@ -263,12 +287,15 @@
     "tabBookmarks": "Bookmarks",
     "tabTriggers": "Triggers",
     "tabMacros": "Macros",
+    "tabScript": "Script",
     "bookmarksProTitle": "Bookmarks are a Pro feature",
     "bookmarksProDesc": "Annotate, pin, and export sessions across reconnects.",
     "triggersProTitle": "Triggers are a Pro feature",
     "triggersProDesc": "Run rules when log lines match. Highlight, mute, alert.",
     "macrosProTitle": "Macros are a Pro feature",
     "macrosProDesc": "Bundle commands into one-shot shortcuts.",
+    "replProTitle": "Script console is a Pro feature",
+    "replProDesc": "JavaScript REPL with live client access, waitFor, and snippets.",
     "triggersDisabledDisconnected": "Connect to a panel before editing triggers.",
     "triggersDisabledNoProfile": "Triggers persist per connection profile. Load a saved profile to keep rules across sessions.",
     "sheetDevicesTitle": "Devices"
@@ -550,7 +577,8 @@
       "triggers": "Triggers",
       "annotations": "Pin & bookmarks",
       "multiwindow": "Multi-window",
-      "sessions": "Session history"
+      "sessions": "Session history",
+      "repl": "Script console"
     }
   },
   "license": {
@@ -578,6 +606,10 @@
       "sessions": {
         "title": "Session history commercial license",
         "description": "Session history is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to persist sessions to SQLite and reopen recent sessions read-only."
+      },
+      "repl": {
+        "title": "Script console commercial license",
+        "description": "The script console is licensed under PolyForm Noncommercial 1.0.0. Free for personal, educational, research, and noncommercial organization use. Commercial use requires a license — paste your signed key below to enable the JavaScript REPL."
       }
     },
     "verify": {

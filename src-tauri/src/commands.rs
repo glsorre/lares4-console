@@ -10,6 +10,8 @@ const ALLOWED_FEATURE_IDS: &[&str] = &[
     "triggers",
     "annotations",
     "multiwindow",
+    "sessions",
+    "repl",
 ];
 
 const MIGRATED_SLOT: &str = "_migrated";

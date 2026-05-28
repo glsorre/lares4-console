@@ -60,7 +60,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
     pendingTxCount: 0,
     liveStreamPaused: false,
     readOnly: false,
-    licensed: { macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false },
+    licensed: { macros: false, tabs: false, triggers: false, annotations: false, multiwindow: false, sessions: false, repl: false },
     ...overrides,
   };
 }

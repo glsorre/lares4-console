@@ -160,6 +160,30 @@
         "cancel": "Annulla"
       }
     },
+    "repl": {
+      "label": "Script",
+      "run": "Esegui",
+      "stop": "Ferma",
+      "clear": "Pulisci",
+      "snippets": "Snippet",
+      "snippetsTitle": "Snippet",
+      "snippetsDescription": "Snippet JavaScript salvati — clicca una riga per caricarlo nell'input.",
+      "snippetsEmpty": "Nessuno snippet. Scrivi codice nell'input, poi salvalo qui.",
+      "snippetsSaveLabel": "Salva l'input corrente come",
+      "snippetsNamePlaceholder": "test-zone-walk",
+      "snippetsDelete": "Elimina snippet",
+      "snippetsLoaded": "Snippet caricato: {{name}}",
+      "scratchpadLoad": "Carica scratchpad",
+      "scratchpadSave": "Salva scratchpad",
+      "scratchpadLoaded": "Caricato da {{path}}",
+      "scratchpadSaved": "Salvato in {{path}}",
+      "expertBadge": "Esperto",
+      "expertBadgeTooltip": "La console di script bypassa la modalità sola lettura. Attenzione — i frame vengono inviati al pannello reale.",
+      "inputPlaceholder": "await client.zone(3) — Invio per eseguire, Shift+Invio per nuova riga",
+      "inputHint": "client, sleep, print, waitFor sono disponibili. Ferma termina il worker.",
+      "scrollbackEmpty": "Scrivi uno snippet JavaScript. Prova: await client.lights",
+      "disconnected": "Connetti un pannello prima di eseguire script."
+    },
     "triggers": {
       "addRule": "Aggiungi regola",
       "proNotice": "I trigger sono una funzione commerciale. Le regole salvate sono mostrate sotto in sola lettura; la valutazione live è in pausa. Sblocca per modificarle ed eseguirle.",
@@ -263,12 +287,15 @@
     "tabBookmarks": "Segnalibri",
     "tabTriggers": "Trigger",
     "tabMacros": "Macro",
+    "tabScript": "Script",
     "bookmarksProTitle": "I segnalibri sono una funzione Pro",
     "bookmarksProDesc": "Annota, fissa ed esporta le sessioni tra riconnessioni.",
     "triggersProTitle": "I trigger sono una funzione Pro",
     "triggersProDesc": "Esegui regole quando le righe di log corrispondono. Evidenzia, silenzia, avvisa.",
     "macrosProTitle": "Le macro sono una funzione Pro",
     "macrosProDesc": "Raccogli comandi in scorciatoie one-shot.",
+    "replProTitle": "La console di script è una funzione Pro",
+    "replProDesc": "REPL JavaScript con accesso al client, waitFor e snippet.",
     "triggersDisabledDisconnected": "Connetti un pannello prima di modificare i trigger.",
     "triggersDisabledNoProfile": "I trigger persistono per profilo di connessione. Carica un profilo salvato per mantenerli tra sessioni.",
     "sheetDevicesTitle": "Dispositivi"
@@ -550,7 +577,8 @@
       "triggers": "Trigger",
       "annotations": "Pin e segnalibri",
       "multiwindow": "Multi-finestra",
-      "sessions": "Cronologia sessioni"
+      "sessions": "Cronologia sessioni",
+      "repl": "Console di script"
     }
   },
   "license": {
@@ -578,6 +606,10 @@
       "sessions": {
         "title": "Licenza commerciale Cronologia sessioni",
         "description": "La cronologia sessioni è sotto PolyForm Noncommercial 1.0.0. Gratis per uso personale, educativo, di ricerca e per organizzazioni non commerciali. L'uso commerciale richiede una licenza — incolla la tua chiave firmata qui sotto per salvare le sessioni in SQLite e riaprirle in sola lettura."
+      },
+      "repl": {
+        "title": "Licenza commerciale Console di script",
+        "description": "La console di script è sotto PolyForm Noncommercial 1.0.0. Gratis per uso personale, educativo, di ricerca e per organizzazioni non commerciali. L'uso commerciale richiede una licenza — incolla la tua chiave firmata qui sotto per abilitare il REPL JavaScript."
       }
     },
     "verify": {

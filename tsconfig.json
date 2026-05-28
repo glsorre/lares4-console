@@ -20,7 +20,8 @@
       "@pro/triggers/*": ["./src/pro/triggers/*"],
       "@pro/annotations/*": ["./src/pro/annotations/*"],
       "@pro/windows/*": ["./src/pro/windows/*"],
-      "@pro/sessions/*": ["./src/pro/sessions/*"]
+      "@pro/sessions/*": ["./src/pro/sessions/*"],
+      "@pro/repl/*": ["./src/pro/repl/*"]
     }
   },
   "include": ["src", "tests"]

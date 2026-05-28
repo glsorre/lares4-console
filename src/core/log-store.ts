@@ -12,22 +12,37 @@ export class LogStore {
   private revision = 0;
   private nextEntryId = 0;
   private readonly bookmarks = new Map<string, Bookmark>();
+  private readonly entryListeners = new Set<(entry: LogEntry) => void>();
   constructor(private readonly maxSize: number = 3000) {}
 
   push(entry: Omit<LogEntry, 'ts'> & { ts?: string }): void {
     const assignedId = entry.entryId ?? `e${String(this.nextEntryId)}`;
     this.nextEntryId += 1;
-    this.entries.push({
+    const finalEntry: LogEntry = {
       ...entry,
       ts: entry.ts ?? nowIso(),
       source: entry.source ?? 'lifecycle',
       message: redactSecrets(entry.message),
       entryId: assignedId,
-    });
+    };
+    this.entries.push(finalEntry);
     if (this.entries.length > this.maxSize) {
       this.entries.splice(0, this.entries.length - this.maxSize);
     }
     this.revision += 1;
+    if (this.entryListeners.size > 0) {
+      for (const listener of this.entryListeners) {
+        try { listener(finalEntry); } catch { /* one bad listener must not kill others */ }
+      }
+    }
+  }
+
+  /** Subscribe to each new entry as it is pushed. Listeners are called synchronously after the
+   *  entry is appended and the revision incremented. Used by the REPL's `waitFor` so it does
+   *  not need to diff `view()` on every controller emit. */
+  subscribeEntries(listener: (entry: LogEntry) => void): () => void {
+    this.entryListeners.add(listener);
+    return () => this.entryListeners.delete(listener);
   }
 
   all(): LogEntry[] {
