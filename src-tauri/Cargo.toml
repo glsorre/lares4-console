@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 description = "Desktop debug console for Lares4 panels"
 authors = ["Giuseppe Lucio Sorrentino"]
 license = "SEE LICENSE IN LICENSE-NOTICE.md"
