@@ -10,18 +10,21 @@ import { INITIAL_SESSION_SNAPSHOT, setSessionSnapshot } from '@/desktop/runtime/
 interface TabsListState {
   tabs: TabMeta[];
   activeId: string;
+  canAddTab: boolean;
 }
 
 interface TabsContextValue {
   controller: TabsController;
   tabs: TabMeta[];
   activeId: string;
+  canAddTab: boolean;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
 
 function sameTabList(a: TabsListState, b: TabsListState): boolean {
   if (a.activeId !== b.activeId) return false;
+  if (a.canAddTab !== b.canAddTab) return false;
   if (a.tabs.length !== b.tabs.length) return false;
   for (let i = 0; i < a.tabs.length; i += 1) {
     const x = a.tabs[i];
@@ -39,7 +42,7 @@ export function TabsProvider({ children }: { children: ReactNode }) {
   const [list, setList] = useState<TabsListState>(() => {
     const s = controller.snapshot();
     setSessionSnapshot(s.activeSnapshot);
-    return { tabs: s.tabs, activeId: s.activeId };
+    return { tabs: s.tabs, activeId: s.activeId, canAddTab: s.canAddTab };
   });
 
   useEffect(() => {
@@ -47,7 +50,7 @@ export function TabsProvider({ children }: { children: ReactNode }) {
       const s = controller.snapshot();
       setSessionSnapshot(s.activeSnapshot);
       setList((prev) => {
-        const next: TabsListState = { tabs: s.tabs, activeId: s.activeId };
+        const next: TabsListState = { tabs: s.tabs, activeId: s.activeId, canAddTab: s.canAddTab };
         return sameTabList(prev, next) ? prev : next;
       });
     });
@@ -58,8 +61,8 @@ export function TabsProvider({ children }: { children: ReactNode }) {
   }, [controller]);
 
   const value = useMemo<TabsContextValue>(
-    () => ({ controller, tabs: list.tabs, activeId: list.activeId }),
-    [controller, list.tabs, list.activeId],
+    () => ({ controller, tabs: list.tabs, activeId: list.activeId, canAddTab: list.canAddTab }),
+    [controller, list.tabs, list.activeId, list.canAddTab],
   );
 
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;

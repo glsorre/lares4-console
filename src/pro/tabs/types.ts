@@ -22,4 +22,5 @@ export interface TabsSnapshot {
   tabs: TabMeta[];
   activeId: string;
   activeSnapshot: SessionSnapshot;
+  canAddTab: boolean;
 }

@@ -4,11 +4,34 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { getPublicKeyAsync, signAsync } from '@noble/ed25519';
 import { TabsStrip } from '../ui/TabsStrip.js';
 import { TabsProvider } from '../context.js';
 import { TooltipProvider } from '../../../components/ui/tooltip.js';
+import {
+  verifyAndSaveFeatureLicense,
+  __resetTokenStoreForTests,
+} from '@/desktop/runtime/commercial-license-prefs.js';
+import { __clearVerifyCacheForTests } from '@/desktop/runtime/license-verify.js';
+import { installFakeTransport } from '../../../../tests/helpers/fake-license-transport.js';
+
+const PRIV = new Uint8Array(32);
+const PUB_HEX_PROMISE = getPublicKeyAsync(PRIV).then((p) =>
+  Array.from(p, (b) => b.toString(16).padStart(2, '0')).join(''),
+);
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('base64').replace(/=+$/u, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+async function mintTabsToken(): Promise<string> {
+  const payload = { v: 1, f: 'tabs', sub: 'test@example.com', iat: Math.floor(Date.now() / 1000) };
+  const payloadEnc = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const sig = await signAsync(new TextEncoder().encode(payloadEnc), PRIV);
+  return `LARES4-${payloadEnc}.${base64UrlEncode(sig)}`;
+}
 
 function Wrap() {
   return (
@@ -47,5 +70,36 @@ describe('TabsStrip', () => {
     render(<Wrap />);
     await user.click(screen.getByRole('button', { name: /new tab/i }));
     assert.ok(screen.getByRole('dialog'));
+  });
+
+  it('unlocks the New tab button when a license-change broadcast fires (no manual dialog)', async () => {
+    // Reproduces the bug: a valid license arriving asynchronously (e.g. bootstrap
+    // finishing) must unlock the button via the license-change broadcast, without
+    // the user opening the dialog.
+    __clearVerifyCacheForTests();
+    __resetTokenStoreForTests();
+    const pubHex = await PUB_HEX_PROMISE;
+    installFakeTransport({ pubkeysHex: [pubHex] });
+    const user = userEvent.setup();
+    try {
+      render(<Wrap />);
+      // Starts locked: one tab, no second-tab capability.
+      assert.equal(screen.getAllByRole('tab').length, 1);
+
+      // License becomes valid and broadcasts a change (mirrors async bootstrap).
+      const token = await mintTabsToken();
+      await act(async () => {
+        await verifyAndSaveFeatureLicense('tabs', token);
+      });
+
+      // Button is now the real action, not the lock: clicking adds a tab and
+      // does NOT open the license dialog.
+      await user.click(screen.getByRole('button', { name: /new tab/i }));
+      assert.equal(screen.queryByRole('dialog'), null, 'unlocked button must not open the license dialog');
+      assert.equal(screen.getAllByRole('tab').length, 2, 'clicking the unlocked button adds a tab');
+    } finally {
+      __resetTokenStoreForTests();
+      __clearVerifyCacheForTests();
+    }
   });
 });

@@ -149,6 +149,7 @@ export class TabsController {
       tabs: metas,
       activeId: activeTab.id,
       activeSnapshot,
+      canAddTab: this.canAddTab(),
     };
   }
 }

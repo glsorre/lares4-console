@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // See LICENSE in this directory.
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -20,14 +20,9 @@ import { useTabs } from '../context.js';
 
 export function TabsStrip() {
   const { t } = useTranslation();
-  const { controller, tabs, activeId } = useTabs();
-  const [licenseTick, setLicenseTick] = useState(0);
+  const { controller, tabs, activeId, canAddTab } = useTabs();
   const [closeTargetId, setCloseTargetId] = useState<string | null>(null);
 
-  const canAdd = useMemo(
-    () => controller.canAddTab(),
-    [controller, tabs.length, licenseTick],
-  );
   const closeTarget = closeTargetId
     ? tabs.find((t) => t.id === closeTargetId)
     : undefined;
@@ -101,7 +96,7 @@ export function TabsStrip() {
         );
       })}
 
-      {canAdd ? (
+      {canAddTab ? (
         <Button
           type="button"
           variant="ghost"
@@ -120,7 +115,6 @@ export function TabsStrip() {
           label={t('pro.tabs.newTab')}
           variant="inline"
           leadingIcon={Plus}
-          onLicenseChanged={() => setLicenseTick((n) => n + 1)}
         />
       )}
 

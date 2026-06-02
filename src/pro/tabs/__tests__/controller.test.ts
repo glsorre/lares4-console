@@ -50,6 +50,11 @@ describe('TabsController', () => {
     assert.equal(s.tabs[1].label, 'Tab 2');
   });
 
+  it('exposes canAddTab through the snapshot so license state is reactive', () => {
+    assert.equal(makeController(false).snapshot().canAddTab, false);
+    assert.equal(makeController(true).snapshot().canAddTab, true);
+  });
+
   it('switches active tab via setActive', () => {
     const c = makeController(true);
     const firstId = c.snapshot().activeId;
